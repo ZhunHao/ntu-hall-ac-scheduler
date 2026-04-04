@@ -34,7 +34,7 @@ An ESP32-based smart controller for **Daikin air conditioners**. Sends IR comman
 
 ### Wiring
 
-```
+```text
        ESP32-C6                 IR TRANSMITTER
    +--------------+            +--------------+
    |           5V |---------->| +5V          |
@@ -155,6 +155,15 @@ After first boot, subsequent flashes can be done over Wi-Fi:
 
 1. In Arduino IDE, go to **Tools → Port** and select the network port named `AC-Scheduler`.
 2. Upload as normal — you will be prompted for the OTA password: **`admin`**.
+
+---
+
+## 🏖 Vacation Mode
+
+- **Manual toggle:** Hit the Vacation Mode switch on the dashboard. The schedule pauses and the AC turns off.
+- **Date range:** Set a departure and return date. The schedule auto-pauses for that window.
+- **Auto-cancel:** Manually turning the AC on (any mode) clears vacation mode immediately.
+- Settings persist across reboots via ESP32 NVS (`Preferences`).
 
 ---
 
