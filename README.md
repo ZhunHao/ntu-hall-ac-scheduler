@@ -1,4 +1,4 @@
-# AC Scheduler v0.1
+# AC Scheduler
 
 An ESP32-based smart controller for **Daikin air conditioners**. Sends IR commands on a configurable nightly schedule, with a clean web dashboard for manual control, timers, and vacation mode.
 
@@ -29,7 +29,7 @@ An ESP32-based smart controller for **Daikin air conditioners**. Sends IR comman
 | Component | Notes |
 |---|---|
 | ESP32-C6 (Seeed XIAO) | Any ESP32 variant works with minor pin adjustments |
-| IR LED | Connected to pin `D1` (GPIO5) |
+| IR Transmitter | Connected to pin `D1` (GPIO5) |
 | BME280 (optional) | I²C on SDA=22, SCL=23; auto-detected at 0x76 or 0x77 |
 
 ### Wiring
