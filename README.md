@@ -12,6 +12,7 @@ An ESP32-based smart controller for **Daikin air conditioners**. Sends IR comman
 - **Vacation mode** — pause the schedule manually or by calendar date range; persists across reboots
 - **BME280 support** — live room temperature & humidity displayed in the dashboard (optional, I²C)
 - **OTA updates** — flash new firmware over Wi-Fi without a USB cable
+- **Post-Boot Recovery** — after a reboot the firmware immediately evaluates the current time slot and sets AC state; no waiting for the first scheduler tick
 - **Auto dark mode** — dashboard switches theme at Singapore sunrise/sunset times
 - **WiFiManager** — no hardcoded credentials; configure Wi-Fi from a captive portal on first boot
 
@@ -24,6 +25,23 @@ An ESP32-based smart controller for **Daikin air conditioners**. Sends IR comman
 | ESP32-C6 (Seeed XIAO) | Any ESP32 variant works with minor pin adjustments |
 | IR LED | Connected to pin `D1` (GPIO5) |
 | BME280 (optional) | I²C on SDA=22, SCL=23; auto-detected at 0x76 or 0x77 |
+
+### Wiring
+
+```
+       ESP32-C6                 IR TRANSMITTER
+   +--------------+            +--------------+
+   |           5V |---------->| +5V          |
+   |          GND |---------->| GNL (GND)    |
+   |      D1 / A1 |---------->| IN (Data)    |
+   +--------------+            +--------------+
+          |
+     [USB-C Power]
+```
+
+Point the IR LED at the Daikin unit with a clear line of sight. Keep the ESP32 plugged into a wall USB-C adapter at all times.
+
+The BME280 environmental sensor is optional — the controller works fully without it. If included, connect via I²C (SDA=22, SCL=23).
 
 ---
 
