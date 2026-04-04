@@ -18,6 +18,12 @@ An ESP32-based smart controller for **Daikin air conditioners**. Sends IR comman
 
 ---
 
+## Dashboard Preview
+
+![AC Scheduler Dashboard](./demo.png)
+
+---
+
 ## Hardware
 
 | Component | Notes |
