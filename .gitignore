@@ -16,3 +16,7 @@ build/
 .vscode/
 *.swp
 *~
+
+# Worktrees
+.worktrees/
+
