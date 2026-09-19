@@ -92,6 +92,8 @@ ap_ssid = "AC-Scheduler-Setup"
 ap_password = "acsetup01"
 ```
 
+The fallback AP uses WPA2. Set `ap_password` to your own password (at least 8 characters); the example password is public.
+
 ### 3. Flash to ESP32-C6
 
 Ensure you have `espflash` installed:
@@ -137,7 +139,7 @@ Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/
 | GET | `/status` | Telemetry JSON payload |
 | GET | `/vacation_toggle` | Toggle manual vacation mode |
 | GET | `/schedule?s=YYYYMMDD&e=YYYYMMDD` | Set vacation date range (`s=0&e=0` to clear) |
-| GET | `/reset-wifi` | Reboot into captive portal mode |
+| GET | `/reset-wifi` | Returns 501 (unsupported); edit `cfg.toml` and reflash to change credentials |
 
 ### `/status` response format
 

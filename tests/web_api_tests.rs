@@ -1,7 +1,136 @@
 use ac_scheduler::ir::{IrTransmitter, MockTransmitter};
+use ac_scheduler::scheduler::VacationSettings;
 use ac_scheduler::state::AppState;
+use ac_scheduler::storage::{InMemoryStorage, VacationStorage};
 use ac_scheduler::web::{parse_query_string, WebHandler};
 use std::sync::{Arc, Mutex};
+
+#[test]
+fn vacation_changes_survive_reloading_storage() {
+    let storage = Arc::new(Mutex::new(InMemoryStorage::new()));
+    let state = Arc::new(Mutex::new(AppState::new()));
+    let handler = WebHandler::with_storage(
+        Arc::clone(&state),
+        Arc::new(Mutex::new(MockTransmitter::new())),
+        storage.clone(),
+    );
+    for (path, query, expected) in [
+        (
+            "/schedule",
+            "s=20990101&e=20990110",
+            VacationSettings::new(false, 20990101, 20990110),
+        ),
+        (
+            "/vacation_toggle",
+            "",
+            VacationSettings::new(true, 20990101, 20990110),
+        ),
+        ("/vacation_toggle", "", VacationSettings::default()),
+        (
+            "/schedule",
+            "s=20990201&e=20990210",
+            VacationSettings::new(false, 20990201, 20990210),
+        ),
+        ("/schedule", "s=0&e=0", VacationSettings::default()),
+    ] {
+        assert_eq!(
+            handler
+                .handle_get(path, &parse_query_string(query))
+                .status_code,
+            200
+        );
+        assert_eq!(storage.lock().unwrap().load().unwrap(), expected);
+        assert_eq!(state.lock().unwrap().vacation, expected);
+    }
+}
+
+#[test]
+fn manual_cooling_persists_vacation_cancellation() {
+    for (path, query) in [
+        ("/cmd", "mode=on16"),
+        ("/cmd", "mode=on25"),
+        ("/timer", "min=30"),
+    ] {
+        let storage = Arc::new(Mutex::new(InMemoryStorage::new()));
+        let state = Arc::new(Mutex::new(AppState::new()));
+        let handler = WebHandler::with_storage(
+            state,
+            Arc::new(Mutex::new(MockTransmitter::new())),
+            storage.clone(),
+        );
+        handler.handle_get("/vacation_toggle", &parse_query_string(""));
+        assert!(storage.lock().unwrap().load().unwrap().manual_vacation);
+        assert_eq!(
+            handler
+                .handle_get(path, &parse_query_string(query))
+                .status_code,
+            200
+        );
+        assert_eq!(
+            storage.lock().unwrap().load().unwrap(),
+            VacationSettings::default()
+        );
+    }
+}
+
+struct FailingStorage;
+impl VacationStorage for FailingStorage {
+    fn load(&self) -> Result<VacationSettings, String> {
+        Ok(VacationSettings::default())
+    }
+    fn save(&mut self, _: &VacationSettings) -> Result<(), String> {
+        Err("flash write failed".into())
+    }
+}
+
+#[test]
+fn reset_wifi_reports_that_compiled_credentials_cannot_be_reset() {
+    let handler = WebHandler::new(
+        Arc::new(Mutex::new(AppState::new())),
+        Arc::new(Mutex::new(MockTransmitter::new())),
+    );
+    let response = handler.handle_get("/reset-wifi", &parse_query_string(""));
+    assert_eq!(response.status_code, 501);
+    assert!(response.body.contains("cfg.toml"));
+}
+
+#[test]
+fn failed_vacation_save_leaves_state_and_ir_unchanged() {
+    for (path, query, vacation) in [
+        ("/vacation_toggle", "", VacationSettings::default()),
+        ("/vacation_toggle", "", VacationSettings::new(true, 0, 0)),
+        (
+            "/schedule",
+            "s=20990101&e=20990110",
+            VacationSettings::default(),
+        ),
+        ("/cmd", "mode=on16", VacationSettings::new(true, 0, 0)),
+        ("/cmd", "mode=on25", VacationSettings::new(true, 0, 0)),
+        ("/timer", "min=30", VacationSettings::new(true, 0, 0)),
+    ] {
+        let mut initial = AppState::new();
+        initial.vacation = vacation;
+        let state = Arc::new(Mutex::new(initial));
+        let tx = Arc::new(Mutex::new(MockTransmitter::new()));
+        let handler = WebHandler::with_storage(
+            state.clone(),
+            tx.clone(),
+            Arc::new(Mutex::new(FailingStorage)),
+        );
+        assert_eq!(
+            handler
+                .handle_get(path, &parse_query_string(query))
+                .status_code,
+            500
+        );
+        let state = state.lock().unwrap();
+        assert_eq!(state.vacation, vacation);
+        assert_eq!(state.system_status, "Standby");
+        assert!(!state.manual_override);
+        assert!(state.timer.is_none());
+        assert_eq!(tx.lock().unwrap().send_count, 0);
+    }
+}
 
 #[test]
 fn test_status_response_schema() {

@@ -37,22 +37,9 @@ fn main() {
             thread::sleep(Duration::from_secs(1));
 
             // 1. Check timer expiration
-            let timer_expired = {
-                let s = sched_state.lock().unwrap();
-                if let Some(ref t) = s.timer {
-                    t.start_instant.elapsed().as_secs() >= t.duration_secs
-                } else {
-                    false
-                }
-            };
-
+            let timer_expired = sched_state.lock().unwrap().expire_timer();
             if timer_expired {
                 log::info!("[Timer] Active timer expired. Turning AC OFF.");
-                {
-                    let mut s = sched_state.lock().unwrap();
-                    s.manual_override = false;
-                    s.set_off();
-                }
                 if let Ok(mut tx) = sched_tx.lock() {
                     let _ = tx.send_command(&DaikinCommand::off());
                 }

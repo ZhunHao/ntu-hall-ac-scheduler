@@ -194,9 +194,12 @@ function toggleVacation(){fetch('/vacation_toggle')}
 function saveCal(){
   let s=dStart.value.replace(/-/g,''),e=dEnd.value.replace(/-/g,'');
   if(!s)s="0";if(!e)e="0";
-  fetch('/schedule?s='+s+'&e='+e).then(()=>{
+  fetch('/schedule?s='+s+'&e='+e).then(r=>{
+    if(!r.ok)throw new Error('Save failed');
     let b=document.getElementById('btn-cal');b.innerText="Saved";b.classList.add('saved');
     setTimeout(()=>{b.innerText="Set Schedule";b.classList.remove('saved')},2000);
+  }).catch(()=>{
+    let b=document.getElementById('btn-cal');b.innerText="Save failed — retry";b.classList.remove('saved');
   });
 }
 

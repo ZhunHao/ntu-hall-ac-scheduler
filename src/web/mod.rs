@@ -1,13 +1,16 @@
 pub mod static_assets;
 
 use crate::ir::{DaikinCommand, IrTransmitter};
+use crate::scheduler::VacationSettings;
 use crate::state::AppState;
+use crate::storage::{InMemoryStorage, VacationStorage};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub struct WebHandler {
     pub state: Arc<Mutex<AppState>>,
     pub transmitter: Arc<Mutex<dyn IrTransmitter>>,
+    storage: Arc<Mutex<dyn VacationStorage>>,
 }
 
 pub struct WebResponse {
@@ -52,7 +55,42 @@ impl WebResponse {
 
 impl WebHandler {
     pub fn new(state: Arc<Mutex<AppState>>, transmitter: Arc<Mutex<dyn IrTransmitter>>) -> Self {
-        Self { state, transmitter }
+        Self::with_storage(
+            state,
+            transmitter,
+            Arc::new(Mutex::new(InMemoryStorage::new())),
+        )
+    }
+
+    pub fn with_storage(
+        state: Arc<Mutex<AppState>>,
+        transmitter: Arc<Mutex<dyn IrTransmitter>>,
+        storage: Arc<Mutex<dyn VacationStorage>>,
+    ) -> Self {
+        Self {
+            state,
+            transmitter,
+            storage,
+        }
+    }
+
+    // The caller holds the state lock so concurrent changes cannot overtake this save.
+    // Do not apply the command or send IR if persistence fails.
+    fn save_vacation(
+        &self,
+        state: &mut AppState,
+        vacation: VacationSettings,
+    ) -> Result<(), WebResponse> {
+        self.storage.lock().unwrap().save(&vacation).map_err(|e| {
+            log::error!("Failed to save vacation settings: {}", e);
+            WebResponse {
+                status_code: 500,
+                content_type: "text/plain",
+                body: "Failed to save vacation settings".to_string(),
+            }
+        })?;
+        state.vacation = vacation;
+        Ok(())
     }
 
     /// Handles an incoming GET request path and query parameters.
@@ -94,7 +132,9 @@ impl WebHandler {
                         {
                             let mut state = self.state.lock().unwrap();
                             if state.is_vacation_active() {
-                                state.vacation.clear();
+                                if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                                    return response;
+                                }
                             }
                             state.manual_override = true;
                             state.set_on(16);
@@ -108,7 +148,9 @@ impl WebHandler {
                         {
                             let mut state = self.state.lock().unwrap();
                             if state.is_vacation_active() {
-                                state.vacation.clear();
+                                if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                                    return response;
+                                }
                             }
                             state.manual_override = true;
                             state.set_on(25);
@@ -133,7 +175,9 @@ impl WebHandler {
                     {
                         let mut state = self.state.lock().unwrap();
                         if state.is_vacation_active() {
-                            state.vacation.clear();
+                            if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                                return response;
+                            }
                         }
                         state.start_timer(mins);
                     }
@@ -158,13 +202,19 @@ impl WebHandler {
                 let send_off = {
                     let mut state = self.state.lock().unwrap();
                     if state.is_vacation_active() {
-                        state.vacation.clear();
+                        if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                            return response;
+                        }
                         if state.system_status == "Vacation Mode" {
                             state.system_status = "Standby".to_string();
                         }
                         false
                     } else {
-                        state.vacation.manual_vacation = true;
+                        let mut vacation = state.vacation;
+                        vacation.manual_vacation = true;
+                        if let Err(response) = self.save_vacation(&mut state, vacation) {
+                            return response;
+                        }
                         state.set_off();
                         true
                     }
@@ -186,8 +236,12 @@ impl WebHandler {
 
                 let send_off = {
                     let mut state = self.state.lock().unwrap();
-                    state.vacation.start_date = start;
-                    state.vacation.end_date = end;
+                    let mut vacation = state.vacation;
+                    vacation.start_date = start;
+                    vacation.end_date = end;
+                    if let Err(response) = self.save_vacation(&mut state, vacation) {
+                        return response;
+                    }
 
                     if state.is_vacation_active() {
                         state.set_off();
@@ -208,9 +262,11 @@ impl WebHandler {
                 WebResponse::ok_plain("OK")
             }
 
-            "/reset-wifi" => {
-                WebResponse::ok_plain("WiFi credentials cleared. Rebooting into config portal...")
-            }
+            "/reset-wifi" => WebResponse {
+                status_code: 501,
+                content_type: "text/plain",
+                body: "Wi-Fi reset is not supported. Edit cfg.toml and rebuild/reflash the firmware to change credentials.".to_string(),
+            },
 
             _ => WebResponse::not_found(),
         }

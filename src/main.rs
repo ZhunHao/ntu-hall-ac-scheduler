@@ -88,16 +88,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     configure_task_watchdog();
 
     // 2. Load NVS storage for Vacation Settings
-    let storage: Box<dyn VacationStorage> =
+    let storage: Arc<Mutex<dyn VacationStorage>> =
         match esp_idf_svc::nvs::EspNvs::new(nvs_default.clone(), "ac-prefs", true) {
-            Ok(nvs) => Box::new(EspNvsStorage::new(nvs)),
+            Ok(nvs) => Arc::new(Mutex::new(EspNvsStorage::new(nvs))),
             Err(e) => {
                 log::warn!("Failed to open NVS: {:?}, using in-memory defaults", e);
-                Box::new(InMemoryStorage::new())
+                Arc::new(Mutex::new(InMemoryStorage::new()))
             }
         };
 
-    let initial_vacation = storage.load().unwrap_or_default();
+    let initial_vacation = storage.lock().unwrap().load().unwrap_or_default();
     let state = Arc::new(Mutex::new(AppState::new()));
     {
         let mut s = state.lock().unwrap();
@@ -185,6 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .try_into()
             .map_err(|_| "wifi.ap_password exceeds 64 bytes")?,
         channel: 1,
+        auth_method: AuthMethod::WPA2Personal,
         ..Default::default()
     };
 
@@ -240,7 +241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8. Start HTTP Web Server on Port 80
     log::info!("Starting HTTP Web Server on port 80...");
     let mut server = EspHttpServer::new(&HttpConfig::default())?;
-    let handler = WebHandler::new(Arc::clone(&state), Arc::clone(&transmitter));
+    let handler = WebHandler::with_storage(Arc::clone(&state), Arc::clone(&transmitter), storage);
 
     let h = Arc::new(handler);
     let routes = [
@@ -314,22 +315,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Check active timer
-        let timer_expired = {
-            let s = state.lock().unwrap();
-            if let Some(ref t) = s.timer {
-                t.start_instant.elapsed().as_secs() >= t.duration_secs
-            } else {
-                false
-            }
-        };
-
+        let timer_expired = state.lock().unwrap().expire_timer();
         if timer_expired {
             log::info!("[Timer] Countdown expired. Turning AC OFF.");
-            {
-                let mut s = state.lock().unwrap();
-                s.manual_override = false;
-                s.set_off();
-            }
             if let Ok(mut tx) = transmitter.lock() {
                 let _ = tx.send_command(&DaikinCommand::off());
             }

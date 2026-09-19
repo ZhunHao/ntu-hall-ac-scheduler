@@ -88,6 +88,19 @@ impl AppState {
         self.timer = None;
     }
 
+    /// Expire the countdown atomically; the caller sends OFF when this returns true.
+    pub fn expire_timer(&mut self) -> bool {
+        let expired = self
+            .timer
+            .as_ref()
+            .is_some_and(|timer| timer.start_instant.elapsed().as_secs() >= timer.duration_secs);
+        if expired {
+            // Keep manual control until the 07:00 boundary, as for an untimed ON.
+            self.set_off();
+        }
+        expired
+    }
+
     pub fn remaining_timer_secs(&self) -> i64 {
         if let Some(ref timer) = self.timer {
             let elapsed = timer.start_instant.elapsed().as_secs();

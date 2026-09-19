@@ -1,6 +1,35 @@
 use ac_scheduler::scheduler::{
     is_night_window, should_ac_be_on, SchedulerAction, SchedulerEngine, VacationSettings,
 };
+use ac_scheduler::state::AppState;
+
+#[test]
+fn timer_expiry_keeps_ac_off_until_morning_override_reset() {
+    let mut state = AppState::new();
+    let mut engine = SchedulerEngine::new();
+    state.start_timer(30);
+    assert!(!state.expire_timer());
+    assert_eq!(engine.tick(21, 50, false, state.manual_override), None);
+    assert_eq!(engine.tick(22, 19, false, state.manual_override), None);
+
+    state.timer.as_mut().unwrap().start_instant =
+        std::time::Instant::now() - std::time::Duration::from_secs(1801);
+    assert!(state.expire_timer());
+    assert!(state.timer.is_none());
+    assert_eq!(state.system_status, "Standby");
+    assert_eq!(engine.tick(22, 20, false, state.manual_override), None);
+    assert!(!state.expire_timer());
+    assert_eq!(engine.tick(23, 15, false, state.manual_override), None);
+    assert_eq!(
+        engine.tick(7, 0, false, state.manual_override),
+        Some(SchedulerAction::TurnOffAndClearOverride)
+    );
+    state.manual_override = false;
+    assert_eq!(
+        engine.tick(22, 0, false, state.manual_override),
+        Some(SchedulerAction::TurnOn(16))
+    );
+}
 
 #[test]
 fn test_night_window_detection() {
