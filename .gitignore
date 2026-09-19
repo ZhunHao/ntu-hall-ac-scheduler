@@ -16,3 +16,17 @@ build/
 .vscode/
 *.swp
 *~
+
+# Worktrees
+.worktrees/
+
+# Rust build artifacts
+target/
+
+# ESP-IDF checkout + toolchains managed by esp-idf-sys/embuild (several GB)
+.embuild/
+
+# Local credentials & configuration
+cfg.toml
+credentials.toml
+
