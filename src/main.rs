@@ -395,13 +395,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let min = chrono::Timelike::minute(&sgt_now);
 
     let vac_active = state.lock().unwrap().is_vacation_active();
-    if let Some(action) = engine.evaluate_boot_recovery(hour, min, vac_active) {
-        if let SchedulerAction::TurnOn(temp) = action {
-            log::info!("[Boot Recovery] Immediately turning AC ON at {}°C", temp);
-            state.lock().unwrap().set_on(temp);
-            if let Ok(mut tx) = transmitter.lock() {
-                let _ = tx.send_command(&DaikinCommand::cool_at(temp));
-            }
+    if let Some(SchedulerAction::TurnOn(temp)) =
+        engine.evaluate_boot_recovery(hour, min, vac_active)
+    {
+        log::info!("[Boot Recovery] Immediately turning AC ON at {}°C", temp);
+        state.lock().unwrap().set_on(temp);
+        if let Ok(mut tx) = transmitter.lock() {
+            let _ = tx.send_command(&DaikinCommand::cool_at(temp));
         }
     }
 

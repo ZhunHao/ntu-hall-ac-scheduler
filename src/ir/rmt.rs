@@ -76,8 +76,8 @@ impl IrTransmitter for EspRmtTransmitter {
         let symbols: Vec<rmt_symbol_word_t> = pulses
             .iter()
             .map(|&(mark, space)| {
-                let m = (mark & 0x7FFF) as u32;
-                let s = (space & 0x7FFF) as u32;
+                let m = mark & 0x7FFF;
+                let s = space & 0x7FFF;
                 rmt_symbol_word_t {
                     val: m | (1 << 15) | (s << 16),
                 }

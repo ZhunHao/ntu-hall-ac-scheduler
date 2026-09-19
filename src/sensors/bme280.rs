@@ -249,11 +249,11 @@ impl TemperatureHumiditySensor for EspBme280 {
                 .map_err(|e| format!("I2C read telemetry error: {:?}", e))?;
             }
 
-            let raw_temp = (((raw_data[0] as i32) << 12)
+            let raw_temp = ((raw_data[0] as i32) << 12)
                 | ((raw_data[1] as i32) << 4)
-                | (((raw_data[2] as i32) >> 4) & 0x0F)) as i32;
+                | (((raw_data[2] as i32) >> 4) & 0x0F);
 
-            let raw_hum = (((raw_data[3] as i32) << 8) | (raw_data[4] as i32)) as i32;
+            let raw_hum = ((raw_data[3] as i32) << 8) | (raw_data[4] as i32);
 
             let (temp, t_fine) = compensate_temperature(raw_temp, &self.calib);
             let hum = compensate_humidity(raw_hum, t_fine, &self.calib);
