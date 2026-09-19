@@ -1,76 +1,111 @@
-//! ESP-IDF RMT (Remote Control) peripheral driver for 38 kHz modulated Daikin IR transmission.
+//! Modern ESP-IDF v5 RMT (Remote Control) TX driver for 38 kHz modulated Daikin IR transmission.
 //!
-//! Uses esp-idf-hal's legacy RMT driver (`rmt-legacy` feature in Cargo.toml).
+//! Uses ESP-IDF v5's `driver/rmt_tx.h` API directly, bypassing legacy v4 drivers.
 
 use super::daikin::{DaikinCommand, DaikinPacket, CARRIER_FREQ_HZ, DUTY_PERCENT};
 use super::IrTransmitter;
-use esp_idf_hal::gpio::OutputPin;
-use esp_idf_hal::peripheral::Peripheral;
-use esp_idf_hal::rmt::config::{CarrierConfig, DutyPercent, TransmitConfig};
-use esp_idf_hal::rmt::{PinState, Pulse, PulseTicks, RmtChannel, Symbol, TxRmtDriver};
-use esp_idf_hal::sys::EspError;
-use esp_idf_hal::units::Hertz;
+use esp_idf_sys::*;
 use std::thread::sleep;
 use std::time::Duration;
 
-/// 80 MHz RMT source clock (PLL_F80M on ESP32-C6) / 80 = 1 MHz, so 1 tick = 1 µs.
-const CLOCK_DIVIDER: u8 = 80;
 const BURST_COUNT: u32 = 5;
 const BURST_SPACING: Duration = Duration::from_millis(200);
 
-pub struct EspRmtTransmitter<'d> {
-    driver: TxRmtDriver<'d>,
+pub struct EspRmtTransmitter {
+    channel: rmt_channel_handle_t,
+    encoder: rmt_encoder_handle_t,
 }
 
-impl<'d> EspRmtTransmitter<'d> {
-    pub fn new<C: RmtChannel>(
-        channel: impl Peripheral<P = C> + 'd,
-        pin: impl Peripheral<P = impl OutputPin> + 'd,
-    ) -> Result<Self, EspError> {
-        let carrier = CarrierConfig::new()
-            .frequency(Hertz(CARRIER_FREQ_HZ))
-            .duty_percent(DutyPercent::new(DUTY_PERCENT as u8)?);
-        let config = TransmitConfig::new()
-            .clock_divider(CLOCK_DIVIDER)
-            .carrier(Some(carrier));
+// Safety: The RMT channel and encoder handles are thread-safe to send between threads.
+unsafe impl Send for EspRmtTransmitter {}
+unsafe impl Sync for EspRmtTransmitter {}
 
-        let driver = TxRmtDriver::new(channel, pin, &config)?;
-        Ok(Self { driver })
+impl EspRmtTransmitter {
+    pub fn new(gpio_num: i32) -> Result<Self, EspError> {
+        let tx_config = rmt_tx_channel_config_t {
+            gpio_num: gpio_num as gpio_num_t,
+            clk_src: soc_periph_rmt_clk_src_t_RMT_CLK_SRC_DEFAULT,
+            resolution_hz: 1_000_000, // 1 MHz -> 1 tick = 1 µs
+            mem_block_symbols: 64,
+            trans_queue_depth: 4,
+            intr_priority: 0,
+            flags: Default::default(),
+        };
+
+        let mut channel: rmt_channel_handle_t = core::ptr::null_mut();
+        esp!(unsafe { rmt_new_tx_channel(&tx_config, &mut channel) })?;
+
+        let carrier_config = rmt_carrier_config_t {
+            frequency_hz: CARRIER_FREQ_HZ,
+            duty_cycle: (DUTY_PERCENT as f32) / 100.0,
+            flags: Default::default(),
+        };
+        esp!(unsafe { rmt_apply_carrier(channel, &carrier_config) })?;
+        esp!(unsafe { rmt_enable(channel) })?;
+
+        let copy_config = rmt_copy_encoder_config_t {};
+        let mut encoder: rmt_encoder_handle_t = core::ptr::null_mut();
+        esp!(unsafe { rmt_new_copy_encoder(&copy_config, &mut encoder) })?;
+
+        log::info!(
+            "[IR RMT] Modern ESP-IDF v5 RMT TX initialized on GPIO {} (38 kHz, 1 MHz clock)",
+            gpio_num
+        );
+
+        Ok(Self { channel, encoder })
     }
 }
 
-/// Converts a duration in µs to RMT ticks, rejecting values above the 15-bit (32 767) limit.
-fn ticks(us: u32) -> Result<PulseTicks, String> {
-    u16::try_from(us)
-        .ok()
-        .and_then(|t| PulseTicks::new(t).ok())
-        .ok_or_else(|| format!("IR pulse of {us} µs exceeds the RMT tick limit"))
+impl Drop for EspRmtTransmitter {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = rmt_disable(self.channel);
+            let _ = rmt_del_channel(self.channel);
+            let _ = rmt_del_encoder(self.encoder);
+        }
+    }
 }
 
-/// Converts (mark_us, space_us) pairs to RMT symbols (carrier on for mark, off for space).
-fn to_symbols(pulses: &[(u32, u32)]) -> Result<Vec<Symbol>, String> {
-    pulses
-        .iter()
-        .map(|&(mark, space)| {
-            Ok(Symbol::new(
-                Pulse::new(PinState::High, ticks(mark)?),
-                Pulse::new(PinState::Low, ticks(space)?),
-            ))
-        })
-        .collect()
-}
-
-impl<'d> IrTransmitter for EspRmtTransmitter<'d> {
+impl IrTransmitter for EspRmtTransmitter {
     fn send_command(&mut self, cmd: &DaikinCommand) -> Result<(), String> {
         let packet = DaikinPacket::from_command(cmd);
-        let symbols = to_symbols(&packet.to_pulses())?;
+        let pulses = packet.to_pulses();
 
-        // Blast 5 times; each send blocks until the full frame (~450 ms) is out, then waits 200 ms
+        // Convert (mark_us, space_us) pairs into hardware 32-bit RMT symbols
+        // bit 0..14 = duration0 (mark), bit 15 = level0 (1), bit 16..30 = duration1 (space), bit 31 = level1 (0)
+        let symbols: Vec<rmt_symbol_word_t> = pulses
+            .iter()
+            .map(|&(mark, space)| {
+                let m = (mark & 0x7FFF) as u32;
+                let s = (space & 0x7FFF) as u32;
+                rmt_symbol_word_t {
+                    val: m | (1 << 15) | (s << 16),
+                }
+            })
+            .collect();
+
+        let transmit_config = rmt_transmit_config_t {
+            loop_count: 0,
+            flags: Default::default(),
+        };
+
         for i in 0..BURST_COUNT {
             log::info!("[IR RMT] Sending burst {}/{}...", i + 1, BURST_COUNT);
-            self.driver
-                .start_iter_blocking(symbols.iter().copied())
+            unsafe {
+                esp!(rmt_transmit(
+                    self.channel,
+                    self.encoder,
+                    symbols.as_ptr() as *const _,
+                    symbols.len() * core::mem::size_of::<rmt_symbol_word_t>(),
+                    &transmit_config,
+                ))
                 .map_err(|e| format!("RMT transmit error: {:?}", e))?;
+
+                // Wait until this burst has finished transmitting
+                esp!(rmt_tx_wait_all_done(self.channel, -1))
+                    .map_err(|e| format!("RMT wait error: {:?}", e))?;
+            }
+
             if i + 1 < BURST_COUNT {
                 sleep(BURST_SPACING);
             }

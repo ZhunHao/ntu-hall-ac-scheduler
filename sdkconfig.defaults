@@ -4,3 +4,10 @@ CONFIG_FREERTOS_UNICORE=y
 # Seeed XIAO ESP32-C6 has 4 MB flash. The IDF default (2 MB) also selects 32 KB MMU pages,
 # which espflash's bundled bootloader (64 KB pages) refuses to boot.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+
+# Skip legacy driver conflict checks to eliminate deprecation noise
+CONFIG_RMT_SKIP_LEGACY_CONFLICT_CHECK=y
+CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
+CONFIG_PCNT_SKIP_LEGACY_CONFLICT_CHECK=y
+CONFIG_GPTIMER_SKIP_LEGACY_CONFLICT_CHECK=y

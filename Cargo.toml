@@ -21,8 +21,7 @@ env_logger = "0.11"
 # ESP-IDF embedded target dependencies
 [target.'cfg(target_os = "espidf")'.dependencies]
 esp-idf-svc = { version = "0.51", features = ["binstart", "alloc"] }
-# `rmt-legacy`: on ESP-IDF v5, 0.45 only exposes the RMT TX driver behind this feature
-esp-idf-hal = { version = "0.45", features = ["rmt-legacy"] }
+esp-idf-hal = "0.45"
 esp-idf-sys = { version = "0.36", features = ["binstart"] }
 embedded-hal = "1.0"
 
@@ -46,6 +45,8 @@ path = "src/main.rs"
 # cfg.toml parse (toml + serde) alone overflows the 20 KB ESP32 main-task stack at boot.
 [profile.release]
 opt-level = "s"
+lto = true
+codegen-units = 1
 
 [profile.dev]
 debug = true # Symbols are nice, and they don't increase the size on Flash
@@ -54,3 +55,6 @@ opt-level = "z"
 # mDNS responder (esp_idf_svc::mdns) — fetched by the ESP-IDF component manager
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/mdns", version = "1.2" }
+
+[package.metadata.espflash]
+partition_table = "partitions.csv"

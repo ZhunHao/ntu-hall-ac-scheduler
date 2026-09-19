@@ -84,14 +84,71 @@ impl VacationStorage for FailingStorage {
 }
 
 #[test]
-fn reset_wifi_reports_that_compiled_credentials_cannot_be_reset() {
+fn reset_wifi_clears_stored_credentials() {
+    use ac_scheduler::storage::{WifiCredentials, WifiStorage};
+    let storage = Arc::new(Mutex::new(InMemoryStorage::new()));
+    storage
+        .lock()
+        .unwrap()
+        .save_wifi(&WifiCredentials {
+            ssid: "MyNet".to_string(),
+            password: "Secret".to_string(),
+        })
+        .unwrap();
+
+    let handler = WebHandler::with_all_storage(
+        Arc::new(Mutex::new(AppState::new())),
+        Arc::new(Mutex::new(MockTransmitter::new())),
+        storage.clone(),
+        Some(storage.clone()),
+    );
+
+    let response = handler.handle_get("/reset-wifi", &parse_query_string(""));
+    assert_eq!(response.status_code, 200);
+    assert!(response.body.contains("cleared"));
+    assert_eq!(storage.lock().unwrap().load_wifi().unwrap(), None);
+}
+
+#[test]
+fn wifi_save_stores_credentials_and_rejects_empty_ssid() {
+    use ac_scheduler::storage::{WifiCredentials, WifiStorage};
+    let storage = Arc::new(Mutex::new(InMemoryStorage::new()));
+    let handler = WebHandler::with_all_storage(
+        Arc::new(Mutex::new(AppState::new())),
+        Arc::new(Mutex::new(MockTransmitter::new())),
+        storage.clone(),
+        Some(storage.clone()),
+    );
+
+    // Empty SSID rejected
+    let resp = handler.handle_get("/wifi_save", &parse_query_string("s=&p=pass"));
+    assert_eq!(resp.status_code, 400);
+
+    // Valid credentials saved
+    let resp = handler.handle_get("/wifi_save", &parse_query_string("s=HomeWiFi&p=12345678"));
+    assert_eq!(resp.status_code, 200);
+    assert_eq!(
+        storage.lock().unwrap().load_wifi().unwrap(),
+        Some(WifiCredentials {
+            ssid: "HomeWiFi".to_string(),
+            password: "12345678".to_string(),
+        })
+    );
+}
+
+#[test]
+fn ota_and_wifi_setup_pages_serve_html() {
     let handler = WebHandler::new(
         Arc::new(Mutex::new(AppState::new())),
         Arc::new(Mutex::new(MockTransmitter::new())),
     );
-    let response = handler.handle_get("/reset-wifi", &parse_query_string(""));
-    assert_eq!(response.status_code, 501);
-    assert!(response.body.contains("cfg.toml"));
+    let resp = handler.handle_get("/wifi", &parse_query_string(""));
+    assert_eq!(resp.status_code, 200);
+    assert!(resp.body.contains("Wi-Fi Setup"));
+
+    let resp = handler.handle_get("/update", &parse_query_string(""));
+    assert_eq!(resp.status_code, 200);
+    assert!(resp.body.contains("Firmware Update"));
 }
 
 #[test]

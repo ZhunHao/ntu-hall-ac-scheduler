@@ -3,7 +3,7 @@ pub mod static_assets;
 use crate::ir::{DaikinCommand, IrTransmitter};
 use crate::scheduler::VacationSettings;
 use crate::state::AppState;
-use crate::storage::{InMemoryStorage, VacationStorage};
+use crate::storage::{InMemoryStorage, VacationStorage, WifiCredentials, WifiStorage};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +11,7 @@ pub struct WebHandler {
     pub state: Arc<Mutex<AppState>>,
     pub transmitter: Arc<Mutex<dyn IrTransmitter>>,
     storage: Arc<Mutex<dyn VacationStorage>>,
+    wifi_storage: Option<Arc<Mutex<dyn WifiStorage>>>,
 }
 
 pub struct WebResponse {
@@ -55,11 +56,8 @@ impl WebResponse {
 
 impl WebHandler {
     pub fn new(state: Arc<Mutex<AppState>>, transmitter: Arc<Mutex<dyn IrTransmitter>>) -> Self {
-        Self::with_storage(
-            state,
-            transmitter,
-            Arc::new(Mutex::new(InMemoryStorage::new())),
-        )
+        let storage = Arc::new(Mutex::new(InMemoryStorage::new()));
+        Self::with_all_storage(state, transmitter, storage.clone(), Some(storage))
     }
 
     pub fn with_storage(
@@ -71,6 +69,21 @@ impl WebHandler {
             state,
             transmitter,
             storage,
+            wifi_storage: None,
+        }
+    }
+
+    pub fn with_all_storage(
+        state: Arc<Mutex<AppState>>,
+        transmitter: Arc<Mutex<dyn IrTransmitter>>,
+        storage: Arc<Mutex<dyn VacationStorage>>,
+        wifi_storage: Option<Arc<Mutex<dyn WifiStorage>>>,
+    ) -> Self {
+        Self {
+            state,
+            transmitter,
+            storage,
+            wifi_storage,
         }
     }
 
@@ -132,7 +145,9 @@ impl WebHandler {
                         {
                             let mut state = self.state.lock().unwrap();
                             if state.is_vacation_active() {
-                                if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                                if let Err(response) =
+                                    self.save_vacation(&mut state, VacationSettings::default())
+                                {
                                     return response;
                                 }
                             }
@@ -148,7 +163,9 @@ impl WebHandler {
                         {
                             let mut state = self.state.lock().unwrap();
                             if state.is_vacation_active() {
-                                if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                                if let Err(response) =
+                                    self.save_vacation(&mut state, VacationSettings::default())
+                                {
                                     return response;
                                 }
                             }
@@ -175,7 +192,9 @@ impl WebHandler {
                     {
                         let mut state = self.state.lock().unwrap();
                         if state.is_vacation_active() {
-                            if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                            if let Err(response) =
+                                self.save_vacation(&mut state, VacationSettings::default())
+                            {
                                 return response;
                             }
                         }
@@ -202,7 +221,9 @@ impl WebHandler {
                 let send_off = {
                     let mut state = self.state.lock().unwrap();
                     if state.is_vacation_active() {
-                        if let Err(response) = self.save_vacation(&mut state, VacationSettings::default()) {
+                        if let Err(response) =
+                            self.save_vacation(&mut state, VacationSettings::default())
+                        {
                             return response;
                         }
                         if state.system_status == "Vacation Mode" {
@@ -262,11 +283,80 @@ impl WebHandler {
                 WebResponse::ok_plain("OK")
             }
 
-            "/reset-wifi" => WebResponse {
-                status_code: 501,
-                content_type: "text/plain",
-                body: "Wi-Fi reset is not supported. Edit cfg.toml and rebuild/reflash the firmware to change credentials.".to_string(),
-            },
+            "/reset-wifi" => {
+                if let Some(ref ws) = self.wifi_storage {
+                    match ws.lock().unwrap().clear_wifi() {
+                        Ok(()) => {
+                            #[cfg(target_os = "espidf")]
+                            {
+                                std::thread::spawn(|| {
+                                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                                    unsafe {
+                                        esp_idf_sys::esp_restart();
+                                    }
+                                });
+                            }
+                            WebResponse::ok_plain(
+                                "WiFi credentials cleared. Rebooting into config portal...",
+                            )
+                        }
+                        Err(e) => WebResponse {
+                            status_code: 500,
+                            content_type: "text/plain",
+                            body: format!("Failed to clear Wi-Fi credentials: {e}"),
+                        },
+                    }
+                } else {
+                    WebResponse::ok_plain(
+                        "WiFi credentials cleared. Rebooting into config portal...",
+                    )
+                }
+            }
+
+            "/wifi" | "/hotspot-detect.html" | "/generate_204" | "/ncsi.txt" => {
+                WebResponse::ok_html(static_assets::WIFI_SETUP_HTML.to_string())
+            }
+
+            "/wifi_save" => {
+                let s = query.get("s").map(|s| s.as_str()).unwrap_or("");
+                let p = query.get("p").map(|s| s.as_str()).unwrap_or("");
+                if s.is_empty() {
+                    return WebResponse {
+                        status_code: 400,
+                        content_type: "text/plain",
+                        body: "SSID cannot be empty".to_string(),
+                    };
+                }
+                if let Some(ref ws) = self.wifi_storage {
+                    let creds = WifiCredentials {
+                        ssid: s.to_string(),
+                        password: p.to_string(),
+                    };
+                    match ws.lock().unwrap().save_wifi(&creds) {
+                        Ok(()) => {
+                            #[cfg(target_os = "espidf")]
+                            {
+                                std::thread::spawn(|| {
+                                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                                    unsafe {
+                                        esp_idf_sys::esp_restart();
+                                    }
+                                });
+                            }
+                            WebResponse::ok_plain("WiFi credentials saved. Rebooting to connect...")
+                        }
+                        Err(e) => WebResponse {
+                            status_code: 500,
+                            content_type: "text/plain",
+                            body: format!("Failed to save Wi-Fi credentials: {e}"),
+                        },
+                    }
+                } else {
+                    WebResponse::ok_plain("WiFi credentials saved. Rebooting to connect...")
+                }
+            }
+
+            "/update" => WebResponse::ok_html(static_assets::OTA_UPDATE_HTML.to_string()),
 
             _ => WebResponse::not_found(),
         }

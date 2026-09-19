@@ -159,6 +159,26 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
     </div>
     <button id="btn-cal" class="vac-save" onclick="saveCal()">Set Schedule</button>
   </div>
+  <div class="sec-hdr">Device &amp; Firmware</div>
+  <div class="glass vac-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div>
+        <div style="font-weight:600;font-size:15px">Wi-Fi Connection</div>
+        <div style="font-size:12px;opacity:0.7">Clear credentials to re-enter setup AP</div>
+      </div>
+      <button class="preset" style="padding:6px 12px;font-size:13px;background:rgba(218,54,51,0.2);color:#f85149" onclick="resetWifi()">Reset</button>
+    </div>
+    <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:12px;margin-top:4px">
+      <div style="font-weight:600;font-size:15px;margin-bottom:4px">OTA Firmware Update</div>
+      <div style="font-size:12px;opacity:0.7;margin-bottom:12px">Select <code>ac-scheduler.bin</code> to update wirelessly</div>
+      <input type="file" id="ota-input" accept=".bin" style="font-size:13px;width:100%;margin-bottom:10px;opacity:0.85">
+      <button id="btn-ota" class="btn-start" style="padding:10px;margin-top:0" onclick="uploadOta()">Upload &amp; Update</button>
+      <div id="ota-progress" style="display:none;margin-top:10px;background:rgba(255,255,255,0.1);height:8px;border-radius:4px;overflow:hidden">
+        <div id="ota-bar" style="background:#238636;height:100%;width:0%"></div>
+      </div>
+      <div id="ota-status" style="font-size:12px;margin-top:8px;text-align:center"></div>
+    </div>
+  </div>
   <div style="text-align:center">
     <div class="seg">
       <button id="t-light" class="seg-btn" onclick="setTheme('light')">Light</button>
@@ -201,6 +221,35 @@ function saveCal(){
   }).catch(()=>{
     let b=document.getElementById('btn-cal');b.innerText="Save failed — retry";b.classList.remove('saved');
   });
+}
+
+function resetWifi(){
+  if(confirm('Clear saved Wi-Fi credentials and reboot into setup mode?')){
+    fetch('/reset-wifi').then(r=>r.text()).then(t=>{
+      alert(t);
+      setTimeout(()=>{window.location.reload()},3000);
+    });
+  }
+}
+
+function uploadOta(){
+  const f=document.getElementById('ota-input').files[0];
+  if(!f){alert('Please select a .bin file first.');return}
+  const btn=document.getElementById('btn-ota'),prog=document.getElementById('ota-progress'),bar=document.getElementById('ota-bar'),st=document.getElementById('ota-status');
+  btn.disabled=true;prog.style.display='block';st.innerText='Uploading firmware...';st.style.color='#8b949e';
+  const xhr=new XMLHttpRequest();
+  xhr.open('POST','/update',true);
+  xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round((e.loaded/e.total)*100);bar.style.width=p+'%';st.innerText='Uploading: '+p+'%'}};
+  xhr.onload=()=>{
+    if(xhr.status===200){
+      bar.style.width='100%';st.innerText='Update successful! Rebooting in 5 seconds...';st.style.color='#3fb950';
+      setTimeout(()=>{window.location.reload()},5000);
+    }else{
+      btn.disabled=false;st.innerText='Update failed: '+(xhr.responseText||xhr.statusText);st.style.color='#f85149';
+    }
+  };
+  xhr.onerror=()=>{btn.disabled=false;st.innerText='Upload network error';st.style.color='#f85149'};
+  xhr.send(f);
 }
 
 function update(){

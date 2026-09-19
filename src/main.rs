@@ -33,15 +33,11 @@ use ac_scheduler::state::AppState;
 #[cfg(target_os = "espidf")]
 use ac_scheduler::storage::nvs::EspNvsStorage;
 #[cfg(target_os = "espidf")]
-use ac_scheduler::storage::{InMemoryStorage, VacationStorage};
+use ac_scheduler::storage::{AppStorage, InMemoryStorage};
 #[cfg(target_os = "espidf")]
 use ac_scheduler::web::{parse_query_string, WebHandler};
 #[cfg(target_os = "espidf")]
-use esp_idf_hal::i2c::{I2cConfig, I2cDriver};
-#[cfg(target_os = "espidf")]
 use esp_idf_hal::peripherals::Peripherals;
-#[cfg(target_os = "espidf")]
-use esp_idf_hal::prelude::*;
 #[cfg(target_os = "espidf")]
 use esp_idf_svc::http::server::{Configuration as HttpConfig, EspHttpServer};
 #[cfg(target_os = "espidf")]
@@ -54,6 +50,8 @@ use esp_idf_svc::mdns::EspMdns;
 use esp_idf_svc::netif::{EspNetif, NetifConfiguration, NetifStack};
 #[cfg(target_os = "espidf")]
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
+#[cfg(target_os = "espidf")]
+use esp_idf_svc::ota::EspOta;
 #[cfg(target_os = "espidf")]
 use esp_idf_svc::sntp::{EspSntp, SyncStatus};
 #[cfg(target_os = "espidf")]
@@ -87,8 +85,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // connect/netif-up waits can each block for up to 15s.
     configure_task_watchdog();
 
-    // 2. Load NVS storage for Vacation Settings
-    let storage: Arc<Mutex<dyn VacationStorage>> =
+    // Confirm running slot as valid (prevents automatic OTA rollback)
+    if let Ok(mut ota) = EspOta::new() {
+        if let Err(e) = ota.mark_running_slot_valid() {
+            log::debug!("[OTA] Mark running slot valid: {:?}", e);
+        }
+    }
+
+    // 2. Load NVS storage for Vacation Settings and Wi-Fi credentials
+    let storage: Arc<Mutex<dyn AppStorage>> =
         match esp_idf_svc::nvs::EspNvs::new(nvs_default.clone(), "ac-prefs", true) {
             Ok(nvs) => Arc::new(Mutex::new(EspNvsStorage::new(nvs))),
             Err(e) => {
@@ -104,32 +109,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         s.vacation = initial_vacation;
     }
 
-    // 3. Initialize RMT IR Transmitter on GPIO 1 (physical D1 on Seeed XIAO ESP32-C6)
-    let transmitter: Arc<Mutex<dyn IrTransmitter>> =
-        match EspRmtTransmitter::new(peripherals.rmt.channel0, peripherals.pins.gpio1) {
-            Ok(tx) => Arc::new(Mutex::new(tx)),
-            Err(e) => {
-                log::error!("Failed to initialize RMT on GPIO1: {:?}", e);
-                Arc::new(Mutex::new(ac_scheduler::ir::MockTransmitter::new()))
-            }
-        };
-
-    // 4. Initialize I2C for BME280 sensor (SDA=GPIO22, SCL=GPIO23)
-    let mut sensor = match I2cDriver::new(
-        peripherals.i2c0,
-        peripherals.pins.gpio22,
-        peripherals.pins.gpio23,
-        &I2cConfig::new().baudrate(100.kHz().into()),
-    ) {
-        Ok(i2c) => Some(EspBme280::new(i2c)),
+    // 3. Initialize Modern ESP-IDF v5 RMT IR Transmitter on GPIO 1 (D1 on Seeed XIAO ESP32-C6)
+    let transmitter: Arc<Mutex<dyn IrTransmitter>> = match EspRmtTransmitter::new(1) {
+        Ok(tx) => Arc::new(Mutex::new(tx)),
         Err(e) => {
-            log::warn!("Failed to initialize I2C for BME280: {:?}", e);
+            log::error!("Failed to initialize modern RMT on GPIO1: {:?}", e);
+            Arc::new(Mutex::new(ac_scheduler::ir::MockTransmitter::new()))
+        }
+    };
+
+    // 4. Initialize Modern ESP-IDF v5 I2C for BME280 sensor (SDA=GPIO22, SCL=GPIO23)
+    let mut sensor = match EspBme280::new(22, 23) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            log::warn!("Failed to initialize modern I2C for BME280: {:?}", e);
             None
         }
     };
 
-    // 5. Configure Wi-Fi (Static IP + Fallback SoftAP)
-    log::info!("Connecting to Wi-Fi SSID: {}", config.wifi.ssid);
+    // 5. Configure Wi-Fi (Check NVS first, fallback to cfg.toml)
+    let nvs_wifi = storage.lock().unwrap().load_wifi().unwrap_or(None);
+    let (wifi_ssid, wifi_pass) = if let Some(ref creds) = nvs_wifi {
+        log::info!("[Wi-Fi] Using credentials from NVS: {}", creds.ssid);
+        (creds.ssid.clone(), creds.password.clone())
+    } else {
+        log::info!(
+            "[Wi-Fi] Using credentials from cfg.toml: {}",
+            config.wifi.ssid
+        );
+        (config.wifi.ssid.clone(), config.wifi.password.clone())
+    };
+    log::info!("Connecting to Wi-Fi SSID: {}", wifi_ssid);
     // Static IP (if configured) must be set when the STA netif is created
     let sta_netif = match static_ip_settings(&config) {
         Some(settings) => {
@@ -156,15 +166,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wifi = BlockingWifi::wrap(esp_wifi, sys_loop)?;
 
     let client_config = ClientConfiguration {
-        ssid: config
-            .wifi
-            .ssid
+        ssid: wifi_ssid
             .as_str()
             .try_into()
             .map_err(|_| "wifi.ssid exceeds 32 bytes")?,
-        password: config
-            .wifi
-            .password
+        password: wifi_pass
             .as_str()
             .try_into()
             .map_err(|_| "wifi.password exceeds 64 bytes")?,
@@ -198,16 +204,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })();
 
-    if let Err(e) = wifi_res {
+    let in_ap_mode = wifi_res.is_err();
+    if in_ap_mode {
         log::warn!(
-            "Failed to connect to '{}' ({:?}). Starting fallback AP: {}",
-            config.wifi.ssid,
-            e,
+            "Failed to connect to '{}'. Starting fallback AP: {}",
+            wifi_ssid,
             config.wifi.ap_ssid
         );
         wifi.set_configuration(&Configuration::AccessPoint(ap_config))?;
         wifi.start()?;
         wifi.wait_netif_up()?;
+
+        // Start captive portal DNS server on UDP port 53 (redirects queries to 192.168.4.1)
+        std::thread::spawn(|| {
+            if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:53") {
+                let mut buf = [0u8; 512];
+                while let Ok((amt, src)) = socket.recv_from(&mut buf) {
+                    if amt < 12 {
+                        continue;
+                    }
+                    let mut response = Vec::with_capacity(amt + 16);
+                    response.extend_from_slice(&buf[0..amt]);
+                    response[2] = 0x81;
+                    response[3] = 0x80;
+                    response[6] = 0x00;
+                    response[7] = 0x01;
+                    response.extend_from_slice(&[
+                        0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04,
+                        192, 168, 4, 1,
+                    ]);
+                    let _ = socket.send_to(&response, src);
+                }
+            }
+        });
     }
 
     log::info!(
@@ -241,7 +270,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 8. Start HTTP Web Server on Port 80
     log::info!("Starting HTTP Web Server on port 80...");
     let mut server = EspHttpServer::new(&HttpConfig::default())?;
-    let handler = WebHandler::with_storage(Arc::clone(&state), Arc::clone(&transmitter), storage);
+    let handler = WebHandler::with_all_storage(
+        Arc::clone(&state),
+        Arc::clone(&transmitter),
+        storage.clone(),
+        Some(storage.clone()),
+    );
 
     let h = Arc::new(handler);
     let routes = [
@@ -252,6 +286,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "/vacation_toggle",
         "/schedule",
         "/reset-wifi",
+        "/wifi",
+        "/wifi_save",
+        "/update",
+        "/hotspot-detect.html",
+        "/generate_204",
+        "/ncsi.txt",
     ];
     for route in routes {
         let h_clone = Arc::clone(&h);
@@ -276,6 +316,77 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         )?;
     }
+
+    // POST /update: Stream uploaded firmware binary directly to the inactive OTA partition
+    server.fn_handler(
+        "/update",
+        esp_idf_svc::http::Method::Post,
+        move |mut req| -> Result<(), EspIOError> {
+            log::info!("[OTA] Received firmware update request...");
+            let mut ota = match EspOta::new() {
+                Ok(o) => o,
+                Err(e) => {
+                    let mut resp = req.into_status_response(500)?;
+                    resp.write(format!("Failed to initialize OTA: {e:?}").as_bytes())?;
+                    return Ok(());
+                }
+            };
+
+            let mut update = match ota.initiate_update() {
+                Ok(u) => u,
+                Err(e) => {
+                    let mut resp = req.into_status_response(500)?;
+                    resp.write(format!("Failed to initiate OTA: {e:?}").as_bytes())?;
+                    return Ok(());
+                }
+            };
+
+            let mut buf = [0u8; 1024];
+            let mut total_bytes = 0;
+            loop {
+                let n = req.read(&mut buf)?;
+                if n == 0 {
+                    break;
+                }
+                if let Err(e) = update.write(&buf[..n]) {
+                    let _ = update.abort();
+                    let mut resp = req.into_status_response(500)?;
+                    resp.write(format!("Failed to write OTA chunk: {e:?}").as_bytes())?;
+                    return Ok(());
+                }
+                total_bytes += n;
+            }
+
+            if total_bytes == 0 {
+                let _ = update.abort();
+                let mut resp = req.into_status_response(400)?;
+                resp.write(b"Empty firmware payload")?;
+                return Ok(());
+            }
+
+            if let Err(e) = update.complete() {
+                let mut resp = req.into_status_response(500)?;
+                resp.write(format!("Failed to complete OTA: {e:?}").as_bytes())?;
+                return Ok(());
+            }
+
+            log::info!(
+                "[OTA] Successfully flashed {} bytes! Rebooting in 2s...",
+                total_bytes
+            );
+            let mut resp = req.into_status_response(200)?;
+            resp.write(b"OTA update successful! Rebooting...")?;
+
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+                unsafe {
+                    esp_idf_sys::esp_restart();
+                }
+            });
+
+            Ok(())
+        },
+    )?;
 
     // 9. Post-Boot Recovery Evaluation
     let mut engine = SchedulerEngine::new();

@@ -1,6 +1,6 @@
 //! ESP32 Non-Volatile Storage (NVS) for vacation settings persistence.
 
-use super::VacationStorage;
+use super::{VacationStorage, WifiCredentials, WifiStorage};
 use crate::scheduler::VacationSettings;
 
 #[cfg(target_os = "espidf")]
@@ -126,6 +126,72 @@ impl VacationStorage for EspNvsStorage {
         #[cfg(not(target_os = "espidf"))]
         {
             let _ = settings;
+            Ok(())
+        }
+    }
+}
+
+impl WifiStorage for EspNvsStorage {
+    fn load_wifi(&self) -> Result<Option<WifiCredentials>, String> {
+        #[cfg(target_os = "espidf")]
+        {
+            let mut ssid_buf = [0u8; 64];
+            let ssid = match self
+                .nvs
+                .get_str("wifiSsid", &mut ssid_buf)
+                .map_err(|e| e.to_string())?
+            {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => return Ok(None),
+            };
+
+            let mut pass_buf = [0u8; 64];
+            let password = self
+                .nvs
+                .get_str("wifiPass", &mut pass_buf)
+                .map_err(|e| e.to_string())?
+                .unwrap_or("")
+                .to_string();
+
+            Ok(Some(WifiCredentials { ssid, password }))
+        }
+        #[cfg(not(target_os = "espidf"))]
+        {
+            Ok(None)
+        }
+    }
+
+    fn save_wifi(&mut self, creds: &WifiCredentials) -> Result<(), String> {
+        #[cfg(target_os = "espidf")]
+        {
+            self.nvs
+                .set_str("wifiSsid", &creds.ssid)
+                .map_err(|e| e.to_string())?;
+            self.nvs
+                .set_str("wifiPass", &creds.password)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "espidf"))]
+        {
+            let _ = creds;
+            Ok(())
+        }
+    }
+
+    fn clear_wifi(&mut self) -> Result<(), String> {
+        #[cfg(target_os = "espidf")]
+        {
+            self.nvs
+                .set_str("wifiSsid", "")
+                .map_err(|e| e.to_string())?;
+            self.nvs
+                .set_str("wifiPass", "")
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "espidf"))]
+        {
             Ok(())
         }
     }
