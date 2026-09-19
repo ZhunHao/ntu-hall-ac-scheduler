@@ -1,0 +1,56 @@
+[package]
+name = "ac-scheduler"
+version = "0.2.0"
+edition = "2021"
+authors = ["Zhun Hao <WONG1351@e.ntu.edu.sg>"]
+description = "ESP32 Daikin AC Scheduler firmware and simulator in Rust"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+log = "0.4"
+toml = "0.8"
+
+# Host simulator HTTP server & logging
+[target.'cfg(not(target_os = "espidf"))'.dependencies]
+tiny_http = "0.12"
+env_logger = "0.11"
+
+# ESP-IDF embedded target dependencies
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-svc = { version = "0.51", features = ["binstart", "alloc"] }
+# `rmt-legacy`: on ESP-IDF v5, 0.45 only exposes the RMT TX driver behind this feature
+esp-idf-hal = { version = "0.45", features = ["rmt-legacy"] }
+esp-idf-sys = { version = "0.36", features = ["binstart"] }
+embedded-hal = "1.0"
+
+[build-dependencies]
+# `espidf` feature: build.rs uses embuild::espidf (only unified in via esp-idf-sys on ESP targets)
+embuild = { version = "0.33", features = ["espidf"] }
+
+[features]
+default = ["std"]
+std = []
+
+[[bin]]
+name = "host-sim"
+path = "src/bin/host_sim.rs"
+
+[[bin]]
+name = "ac-scheduler"
+path = "src/main.rs"
+
+# Profiles from esp-rs/esp-idf-template. Dev builds must be optimized: at opt-level 0 the
+# cfg.toml parse (toml + serde) alone overflows the 20 KB ESP32 main-task stack at boot.
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true # Symbols are nice, and they don't increase the size on Flash
+opt-level = "z"
+
+# mDNS responder (esp_idf_svc::mdns) — fetched by the ESP-IDF component manager
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mdns", version = "1.2" }

@@ -1,0 +1,20 @@
+# Wi-Fi & Device Configuration for AC Scheduler
+# Copy this file to `cfg.toml` and fill in your credentials.
+# `cfg.toml` is ignored by git so your secrets stay private.
+
+[wifi]
+ssid = "Your_WiFi_SSID"
+password = "Your_WiFi_Password"
+
+# Optional Static IP configuration:
+# Using static IP connects ~1.5 seconds faster and guarantees
+# a consistent dashboard URL (e.g., http://192.168.0.93).
+# Comment out `static_ip` if you prefer DHCP.
+static_ip = "192.168.0.93"
+gateway = "192.168.0.1"
+subnet = "255.255.255.0"
+dns = "192.168.0.1"
+
+# Fallback SoftAP mode (if connection fails or no credentials given)
+ap_ssid = "AC-Scheduler-Setup"
+ap_password = "acsetup01"
