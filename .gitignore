@@ -30,3 +30,6 @@ target/
 cfg.toml
 credentials.toml
 
+
+.env
+logs/
