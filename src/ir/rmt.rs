@@ -8,7 +8,7 @@ use esp_idf_sys::*;
 use std::thread::sleep;
 use std::time::Duration;
 
-const BURST_COUNT: u32 = 5;
+const BURST_COUNT: u32 = 3;
 const BURST_SPACING: Duration = Duration::from_millis(200);
 
 pub struct EspRmtTransmitter {
