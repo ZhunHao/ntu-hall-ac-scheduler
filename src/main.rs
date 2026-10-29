@@ -341,9 +341,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
+            let content_len = req
+                .header("Content-Length")
+                .and_then(|v| v.parse::<usize>().ok());
+
             let mut buf = [0u8; 1024];
             let mut total_bytes = 0;
             loop {
+                if let Some(cl) = content_len {
+                    if total_bytes >= cl {
+                        break;
+                    }
+                }
                 let n = req.read(&mut buf)?;
                 if n == 0 {
                     break;
