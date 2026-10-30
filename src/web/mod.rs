@@ -2,7 +2,7 @@ pub mod static_assets;
 
 use crate::ir::{DaikinCommand, IrTransmitter};
 use crate::scheduler::VacationSettings;
-use crate::state::AppState;
+use crate::state::{AppState, MAX_COOL_SETPOINT_C};
 use crate::storage::{InMemoryStorage, VacationStorage, WifiCredentials, WifiStorage};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -141,7 +141,8 @@ impl WebHandler {
                         }
                         WebResponse::ok_plain("OK")
                     }
-                    "on16" => {
+                    // "on16" is the pre-22 °C name, kept so old bookmarks and shortcuts still work
+                    "on22" | "on16" => {
                         {
                             let mut state = self.state.lock().unwrap();
                             if state.is_vacation_active() {
@@ -152,10 +153,10 @@ impl WebHandler {
                                 }
                             }
                             state.manual_override = true;
-                            state.set_on(16);
+                            state.set_on(MAX_COOL_SETPOINT_C);
                         }
                         if let Ok(mut tx) = self.transmitter.lock() {
-                            let _ = tx.send_command(&DaikinCommand::cool_at(16));
+                            let _ = tx.send_command(&DaikinCommand::cool_at(MAX_COOL_SETPOINT_C));
                         }
                         WebResponse::ok_plain("OK")
                     }
@@ -201,7 +202,7 @@ impl WebHandler {
                         state.start_timer(mins);
                     }
                     if let Ok(mut tx) = self.transmitter.lock() {
-                        let _ = tx.send_command(&DaikinCommand::cool_at(16));
+                        let _ = tx.send_command(&DaikinCommand::cool_at(MAX_COOL_SETPOINT_C));
                     }
                 } else {
                     {

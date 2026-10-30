@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- **Clock gate**: the schedule and boot recovery only run once the clock is valid (SNTP synced, or a plausible year kept across a software reset). The dashboard and `/status` (`clock`) show "Clock not set" until then. Fixes the night schedule never running after a power cut without internet, when the clock read 08:00 SGT on 1970-01-01.
+- **Home NTP server**: SNTP tries the public pool, then `[time] home_ntp` from `cfg.toml` (chrony on the home server; drop-in in `server/chrony/`).
+- **Wi-Fi retry**: after 10 minutes in fallback-AP mode with no clients, the board reboots to retry the station, except during a running night schedule.
+- **Last-known time**: saved to NVS hourly and logged at boot to show how long the power was out (diagnostic only).
+
+### Changed
+- Max Cool, the timer and scheduled slots send 22 °C instead of 16 °C; the hall's Daikin controller holds anything below 22 °C at 22. `/cmd?mode=on22` replaces `on16`, which remains as an alias.
+
 ## [0.2.0] - 2026-09-19
 
 ### Added

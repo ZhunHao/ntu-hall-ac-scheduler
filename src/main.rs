@@ -23,7 +23,9 @@ use ac_scheduler::ir::rmt::EspRmtTransmitter;
 #[cfg(target_os = "espidf")]
 use ac_scheduler::ir::{DaikinCommand, IrTransmitter};
 #[cfg(target_os = "espidf")]
-use ac_scheduler::scheduler::{is_night_window, SchedulerAction, SchedulerEngine};
+use ac_scheduler::net::should_retry_station;
+#[cfg(target_os = "espidf")]
+use ac_scheduler::scheduler::{clock_ok, is_night_window, SchedulerAction, SchedulerEngine};
 #[cfg(target_os = "espidf")]
 use ac_scheduler::sensors::bme280::EspBme280;
 #[cfg(target_os = "espidf")]
@@ -53,7 +55,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 #[cfg(target_os = "espidf")]
 use esp_idf_svc::ota::EspOta;
 #[cfg(target_os = "espidf")]
-use esp_idf_svc::sntp::{EspSntp, SyncStatus};
+use esp_idf_svc::sntp::{EspSntp, SntpConf, SyncStatus};
 #[cfg(target_os = "espidf")]
 use esp_idf_svc::wifi::{
     AccessPointConfiguration, AuthMethod, BlockingWifi, ClientConfiguration, Configuration,
@@ -103,6 +105,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
     let initial_vacation = storage.lock().unwrap().load().unwrap_or_default();
+
+    // Diagnostic only: shows how long the power was out. Never used to set the clock.
+    match storage.lock().unwrap().load_last_known_time() {
+        Ok(Some(t)) => match chrono::DateTime::from_timestamp(t, 0) {
+            Some(dt) => log::info!("[Clock] Last known time before this boot: {} UTC", dt),
+            None => log::warn!("[Clock] Invalid last known time in NVS: {}", t),
+        },
+        Ok(None) => log::info!("[Clock] No last known time in NVS"),
+        Err(e) => log::warn!("[Clock] Failed to read last known time: {}", e),
+    }
     let state = Arc::new(Mutex::new(AppState::new()));
     {
         let mut s = state.lock().unwrap();
@@ -263,9 +275,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // 7. Initialize SNTP for GMT+8 (Singapore Standard Time)
-    log::info!("Starting SNTP synchronization for GMT+8...");
-    let sntp = EspSntp::new_default()?;
+    // 7. Initialize SNTP: public pool first, then chrony on the home server, which keeps
+    // serving time when the internet is down (needs CONFIG_LWIP_SNTP_MAX_SERVERS=2).
+    let mut sntp_conf = SntpConf::default();
+    if let (Some(home), Some(second)) = (
+        config.time.home_ntp.as_deref(),
+        sntp_conf.servers.get_mut(1),
+    ) {
+        *second = home;
+    }
+    log::info!("Starting SNTP with servers {:?}", sntp_conf.servers);
+    let sntp = EspSntp::new(&sntp_conf)?;
 
     // 8. Start HTTP Web Server on Port 80
     log::info!("Starting HTTP Web Server on port 80...");
@@ -397,22 +417,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
 
-    // 9. Post-Boot Recovery Evaluation
+    // 9. Scheduler. Boot recovery runs on the first loop step with a valid clock (see
+    // SchedulerEngine::step), not here: before SNTP syncs the clock reads 08:00 SGT on 1970-01-01.
     let mut engine = SchedulerEngine::new();
-    let sgt_now = chrono::Utc::now() + chrono::Duration::hours(8);
-    let hour = chrono::Timelike::hour(&sgt_now);
-    let min = chrono::Timelike::minute(&sgt_now);
-
-    let vac_active = state.lock().unwrap().is_vacation_active();
-    if let Some(SchedulerAction::TurnOn(temp)) =
-        engine.evaluate_boot_recovery(hour, min, vac_active)
-    {
-        log::info!("[Boot Recovery] Immediately turning AC ON at {}°C", temp);
-        state.lock().unwrap().set_on(temp);
-        if let Ok(mut tx) = transmitter.lock() {
-            let _ = tx.send_command(&DaikinCommand::cool_at(temp));
-        }
-    }
+    let ap_started = std::time::Instant::now();
+    let mut last_time_saved: Option<std::time::Instant> = None;
 
     // 10. Main Control Loop (subscribe this task to the watchdog; the loop pets it every second)
     if let Err(e) =
@@ -434,6 +443,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             state.lock().unwrap().ntp_ok = true;
         }
 
+        let utc_now = chrono::Utc::now();
+        let clock_valid = {
+            let mut s = state.lock().unwrap();
+            let valid = clock_ok(s.ntp_ok, utc_now);
+            if valid && !s.clock_ok {
+                log::info!("[Clock] Clock valid ({} UTC); schedule enabled", utc_now);
+            }
+            s.clock_ok = valid;
+            valid
+        };
+
+        // Record the time hourly so the next boot can log how long the power was out
+        if clock_valid && last_time_saved.is_none_or(|t| t.elapsed() >= Duration::from_secs(3600)) {
+            if let Err(e) = storage
+                .lock()
+                .unwrap()
+                .save_last_known_time(utc_now.timestamp())
+            {
+                log::warn!("[Clock] Failed to save last known time: {}", e);
+            }
+            last_time_saved = Some(std::time::Instant::now());
+        }
+
         // Check active timer
         let timer_expired = state.lock().unwrap().expire_timer();
         if timer_expired {
@@ -444,9 +476,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Ticks scheduler
-        let sgt_now = chrono::Utc::now() + chrono::Duration::hours(8);
+        let sgt_now = utc_now + chrono::Duration::hours(8);
         let hour = chrono::Timelike::hour(&sgt_now);
         let min = chrono::Timelike::minute(&sgt_now);
+
+        // Fallback-AP mode: reboot to retry the station once nobody is using the setup AP
+        if in_ap_mode
+            && should_retry_station(
+                ap_started.elapsed().as_secs(),
+                ap_client_count(),
+                clock_valid,
+                is_night_window(hour),
+            )
+        {
+            log::warn!("[Wi-Fi] Still in fallback AP mode; rebooting to retry the station");
+            unsafe {
+                esp_idf_sys::esp_restart();
+            }
+        }
 
         let (vac_active, manual_override) = {
             let mut s = state.lock().unwrap();
@@ -454,7 +501,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (s.is_vacation_active(), s.manual_override)
         };
 
-        if let Some(action) = engine.tick(hour, min, vac_active, manual_override) {
+        if let Some(action) = engine.step(clock_valid, hour, min, vac_active, manual_override) {
             match action {
                 SchedulerAction::TurnOn(temp) => {
                     log::info!("[Scheduler] Auto slot ON ({}°C)", temp);
@@ -496,6 +543,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "espidf")]
 const WDT_TIMEOUT_MS: u32 = 10_000;
+
+/// Number of stations connected to the fallback AP (0 if the query fails).
+#[cfg(target_os = "espidf")]
+fn ap_client_count() -> usize {
+    let mut list = esp_idf_sys::wifi_sta_list_t::default();
+    match esp_idf_sys::esp!(unsafe { esp_idf_sys::esp_wifi_ap_get_sta_list(&mut list) }) {
+        Ok(()) => list.num as usize,
+        Err(_) => 0,
+    }
+}
 
 /// Sets a 10s panicking Task WDT. ESP-IDF v5 already initializes the TWDT at boot
 /// (CONFIG_ESP_TASK_WDT_INIT=y by default), so reconfigure it; init only if that is disabled.

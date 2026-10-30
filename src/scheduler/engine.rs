@@ -42,6 +42,10 @@ pub const SCHEDULE: [CycleSlot; 7] = [
     }, // Sunrise Fort     05:20-06:00 (40m)
 ];
 
+/// Setpoint sent for scheduled slots. The hall's Daikin controller holds anything below 22 °C at
+/// 22, so sending 22 keeps the intended state equal to what the unit actually runs.
+pub const SCHEDULED_SETPOINT_C: u8 = 22;
+
 pub fn is_night_window(hour: u32) -> bool {
     !(7..22).contains(&hour)
 }
@@ -66,6 +70,8 @@ pub enum SchedulerAction {
 pub struct SchedulerEngine {
     pub in_active_window: bool,
     pub last_cycle_was_on: bool,
+    /// Set once boot recovery has run on the first tick with a valid clock.
+    pub recovered: bool,
 }
 
 impl SchedulerEngine {
@@ -85,10 +91,34 @@ impl SchedulerEngine {
             let m = hour * 60 + min;
             if should_ac_be_on(m) {
                 self.last_cycle_was_on = true;
-                return Some(SchedulerAction::TurnOn(16));
+                return Some(SchedulerAction::TurnOn(SCHEDULED_SETPOINT_C));
             }
         }
         None
+    }
+
+    /// Runs one control-loop step. Does nothing until the clock is valid; the first step with a
+    /// valid clock runs boot recovery (so a late SNTP sync inside a slot still turns the AC on),
+    /// and every later step is a normal tick. A manual override set before the clock became
+    /// valid is respected: recovery is skipped and the tick leaves the AC alone.
+    pub fn step(
+        &mut self,
+        clock_ok: bool,
+        hour: u32,
+        min: u32,
+        vacation_active: bool,
+        manual_override: bool,
+    ) -> Option<SchedulerAction> {
+        if !clock_ok {
+            return None;
+        }
+        if !self.recovered {
+            self.recovered = true;
+            if !manual_override {
+                return self.evaluate_boot_recovery(hour, min, vacation_active);
+            }
+        }
+        self.tick(hour, min, vacation_active, manual_override)
     }
 
     /// Evaluates the periodic 1-second scheduler tick.
@@ -109,7 +139,7 @@ impl SchedulerEngine {
                 if should_on && !self.last_cycle_was_on {
                     self.last_cycle_was_on = true;
                     self.in_active_window = true;
-                    return Some(SchedulerAction::TurnOn(16));
+                    return Some(SchedulerAction::TurnOn(SCHEDULED_SETPOINT_C));
                 } else if !should_on && self.last_cycle_was_on {
                     self.last_cycle_was_on = false;
                     self.in_active_window = true;

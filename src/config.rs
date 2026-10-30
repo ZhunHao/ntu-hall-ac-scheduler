@@ -46,9 +46,18 @@ impl Default for WifiSettings {
     }
 }
 
+/// Time sources. SNTP tries the public pool first, then `home_ntp` (chrony on the home server),
+/// which keeps answering from its own RTC when the internet is down.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TimeSettings {
+    pub home_ntp: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub wifi: WifiSettings,
+    #[serde(default)]
+    pub time: TimeSettings,
 }
 
 impl AppConfig {

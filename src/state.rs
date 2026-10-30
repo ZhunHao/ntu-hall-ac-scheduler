@@ -4,6 +4,10 @@ use crate::scheduler::VacationSettings;
 use serde::Serialize;
 use std::time::Instant;
 
+/// Setpoint for Max Cool and the countdown timer. The hall's Daikin controller holds anything
+/// below 22 °C at 22, so lower values would only make the reported state wrong.
+pub const MAX_COOL_SETPOINT_C: u8 = 22;
+
 #[derive(Debug, Clone)]
 pub struct ActiveTimer {
     pub start_instant: Instant,
@@ -31,6 +35,8 @@ pub struct AppState {
 
     // NTP status
     pub ntp_ok: bool,
+    /// Wall clock is valid (see `scheduler::clock_ok`); the schedule is idle while false.
+    pub clock_ok: bool,
 }
 
 impl Default for AppState {
@@ -46,6 +52,7 @@ impl Default for AppState {
             room_temp: 24.0,
             room_humidity: 50.0,
             ntp_ok: false,
+            clock_ok: false,
         }
     }
 }
@@ -57,7 +64,7 @@ impl AppState {
 
     pub fn set_on(&mut self, temp: u8) {
         self.current_temp = temp;
-        self.system_status = if temp < 20 {
+        self.system_status = if temp <= MAX_COOL_SETPOINT_C {
             "Max Cool".to_string()
         } else {
             "Comfort".to_string()
@@ -81,7 +88,7 @@ impl AppState {
             initial_minutes: minutes,
         });
         self.manual_override = true;
-        self.set_on(16);
+        self.set_on(MAX_COOL_SETPOINT_C);
     }
 
     pub fn cancel_timer(&mut self) {
@@ -148,6 +155,7 @@ impl AppState {
             vac_s: self.vacation.start_date,
             vac_e: self.vacation.end_date,
             ntp_ok: self.ntp_ok,
+            clock: if self.clock_ok { "ok" } else { "not_set" },
         }
     }
 }
@@ -181,4 +189,5 @@ pub struct StatusResponse {
     #[serde(rename = "vacE")]
     pub vac_e: i64,
     pub ntp_ok: bool,
+    pub clock: &'static str,
 }

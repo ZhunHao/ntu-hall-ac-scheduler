@@ -1,5 +1,6 @@
 pub mod config;
 pub mod ir;
+pub mod net;
 pub mod scheduler;
 pub mod sensors;
 pub mod state;
