@@ -172,6 +172,7 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
       <div style="font-weight:600;font-size:15px;margin-bottom:4px">OTA Firmware Update</div>
       <div style="font-size:12px;opacity:0.7;margin-bottom:12px">Select <code>ac-scheduler.bin</code> to update wirelessly</div>
       <input type="file" id="ota-input" accept=".bin" style="font-size:13px;width:100%;margin-bottom:10px;opacity:0.85">
+      <input type="password" id="ota-token" placeholder="OTA token" autocomplete="off" style="font-size:13px;width:100%;margin-bottom:10px;padding:6px;box-sizing:border-box">
       <button id="btn-ota" class="btn-start" style="padding:10px;margin-top:0" onclick="uploadOta()">Upload &amp; Update</button>
       <div id="ota-progress" style="display:none;margin-top:10px;background:rgba(255,255,255,0.1);height:8px;border-radius:4px;overflow:hidden">
         <div id="ota-bar" style="background:#238636;height:100%;width:0%"></div>
@@ -235,10 +236,13 @@ function resetWifi(){
 function uploadOta(){
   const f=document.getElementById('ota-input').files[0];
   if(!f){alert('Please select a .bin file first.');return}
+  const token=document.getElementById('ota-token').value;
+  if(!token){alert('Enter the OTA token from cfg.toml.');return}
   const btn=document.getElementById('btn-ota'),prog=document.getElementById('ota-progress'),bar=document.getElementById('ota-bar'),st=document.getElementById('ota-status');
   btn.disabled=true;prog.style.display='block';st.innerText='Uploading firmware...';st.style.color='#8b949e';
   const xhr=new XMLHttpRequest();
   xhr.open('POST','/update',true);
+  xhr.setRequestHeader('X-OTA-Token',token);
   xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round((e.loaded/e.total)*100);bar.style.width=p+'%';st.innerText='Uploading: '+p+'%'}};
   xhr.onload=()=>{
     if(xhr.status===200){

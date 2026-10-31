@@ -11,6 +11,14 @@ fn main() {
     println!("Gateway:         {:?}", config.wifi.gateway);
     println!("mDNS Hostname:   {}.local", config.wifi.mdns_hostname);
     println!("Fallback AP:     {}", config.wifi.ap_ssid);
+    println!(
+        "OTA uploads:     {}",
+        if ac_scheduler::ota::usable_token(config.ota.token.as_deref()).is_some() {
+            "enabled (token set)"
+        } else {
+            "disabled (set [ota] token)"
+        }
+    );
     println!("--------------------------------------------------");
     println!("To run the local simulator and web dashboard on host:");
     println!("    cargo run --bin host-sim");
@@ -22,6 +30,8 @@ use ac_scheduler::config::AppConfig;
 use ac_scheduler::ir::rmt::EspRmtTransmitter;
 #[cfg(target_os = "espidf")]
 use ac_scheduler::ir::{DaikinCommand, IrTransmitter};
+#[cfg(target_os = "espidf")]
+use ac_scheduler::ota::{authorize_ota, usable_token, OTA_TOKEN_HEADER};
 #[cfg(target_os = "espidf")]
 use ac_scheduler::scheduler::{is_night_window, SchedulerAction, SchedulerEngine};
 #[cfg(target_os = "espidf")]
@@ -269,7 +279,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 8. Start HTTP Web Server on Port 80
     log::info!("Starting HTTP Web Server on port 80...");
-    let mut server = EspHttpServer::new(&HttpConfig::default())?;
+    // Extra stack headroom: esp_ota_end verifies the RSA-3072 image signature on the httpd task
+    let mut server = EspHttpServer::new(&HttpConfig {
+        stack_size: 10240,
+        ..Default::default()
+    })?;
     let handler = WebHandler::with_all_storage(
         Arc::clone(&state),
         Arc::clone(&transmitter),
@@ -317,12 +331,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
     }
 
-    // POST /update: Stream uploaded firmware binary directly to the inactive OTA partition
+    // POST /update: Stream uploaded firmware binary directly to the inactive OTA partition.
+    // Requires the cfg.toml token and is refused in fallback AP mode; update.complete() then
+    // rejects any image not signed with the running app's key (sdkconfig.defaults).
+    let ota_token = usable_token(config.ota.token.as_deref()).map(str::to_owned);
+    if ota_token.is_none() {
+        log::warn!("[OTA] No usable [ota] token in cfg.toml; POST /update is disabled");
+    }
     server.fn_handler(
         "/update",
         esp_idf_svc::http::Method::Post,
         move |mut req| -> Result<(), EspIOError> {
             log::info!("[OTA] Received firmware update request...");
+            // Checked before EspOta::initiate_update, which erases the inactive slot
+            if let Err(rejection) = authorize_ota(
+                ota_token.as_deref(),
+                req.header(OTA_TOKEN_HEADER),
+                in_ap_mode,
+            ) {
+                log::warn!("[OTA] Rejected: {}", rejection.message());
+                let mut resp = req.into_status_response(rejection.status_code())?;
+                resp.write(rejection.message().as_bytes())?;
+                return Ok(());
+            }
             let mut ota = match EspOta::new() {
                 Ok(o) => o,
                 Err(e) => {
@@ -382,9 +413,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
+            // esp_ota_end fails with ESP_ERR_OTA_VALIDATE_FAILED for an unsigned, tampered or
+            // foreign-key image; the boot partition is left unchanged
             if let Err(e) = update.complete() {
-                let mut resp = req.into_status_response(500)?;
-                resp.write(format!("Failed to complete OTA: {e:?}").as_bytes())?;
+                log::warn!("[OTA] Image rejected: {:?}", e);
+                let status = if e.code() == esp_idf_sys::ESP_ERR_OTA_VALIDATE_FAILED {
+                    400
+                } else {
+                    500
+                };
+                let mut resp = req.into_status_response(status)?;
+                resp.write(format!("Firmware image rejected: {e:?}").as_bytes())?;
                 return Ok(());
             }
 

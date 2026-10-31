@@ -18,6 +18,7 @@ An ESP32-based smart controller for **Daikin air conditioners**, written in **Ru
 - **Auto dark mode** — dashboard switches theme automatically at Singapore sunrise/sunset times
 - **Configurable Wi-Fi & Static IP** — credentials managed via `cfg.toml` with automatic SoftAP fallback (`AC-Scheduler-Setup`)
 - **mDNS discovery** — accessible at `http://ac-scheduler.local`
+- **Signed OTA updates** — firmware uploads need a shared token and an image signed with your own RSA-3072 key; refused in fallback AP mode
 
 ---
 
@@ -94,21 +95,80 @@ ap_password = "acsetup01"
 
 The fallback AP uses WPA2. Set `ap_password` to your own password (at least 8 characters); the example password is public.
 
-### 3. Flash to ESP32-C6
+Set an OTA token, or wireless updates stay disabled:
 
-Ensure you have `espflash` installed:
-
-```bash
-cargo install cargo-espflash
+```toml
+[ota]
+token = "paste the output of: openssl rand -hex 24"
 ```
 
-Flash the firmware:
+The token is compiled into the firmware. Tokens shorter than 16 characters, and the example placeholder, are treated as unset.
+
+### 3. Flash to ESP32-C6
+
+The firmware only accepts OTA images signed with your key, and it **aborts at boot if it is not signed itself** (that signature carries the public key it checks updates against). So every image you flash, by USB or OTA, must be signed. `cargo run` / `espflash flash` on their own write an unsigned app.
+
+Install the tools (`espsecure.py` ships with `esptool`):
 
 ```bash
-cargo espflash flash --release --target riscv32imac-esp-espidf
+cargo install espflash
+```
+
+```bash
+pip install "esptool<5"
+```
+
+Generate the signing key once. Keep it out of git (`*.pem` is ignored) and back it up: without it you can only update over USB.
+
+```bash
+espsecure.py generate_signing_key --version 2 --scheme rsa3072 secure_boot_signing_key.pem
+```
+
+Build, convert the ELF to an app image, and sign it:
+
+```bash
+cargo build --release --target riscv32imac-esp-espidf --bin ac-scheduler
+```
+
+```bash
+espflash save-image --chip esp32c6 target/riscv32imac-esp-espidf/release/ac-scheduler ac-scheduler.bin
+```
+
+```bash
+espsecure.py sign_data --version 2 --keyfile secure_boot_signing_key.pem --output ac-scheduler-signed.bin ac-scheduler.bin
+```
+
+First flash over USB: write the bootloader and partition table, reset `otadata` so the board boots `ota_0`, then overwrite `ota_0` (0x20000) with the signed image:
+
+```bash
+espflash flash --release --erase-data-parts otadata target/riscv32imac-esp-espidf/release/ac-scheduler
+```
+
+```bash
+espflash write-bin 0x20000 ac-scheduler-signed.bin
 ```
 
 Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/`** in your browser.
+
+### 4. Signed OTA updates
+
+Later updates go over Wi-Fi. Build and sign as above, then upload `ac-scheduler-signed.bin` from the dashboard's **OTA Firmware Update** card (enter the token from `cfg.toml`), or:
+
+```bash
+curl --fail -H "X-OTA-Token: $OTA_TOKEN" --data-binary @ac-scheduler-signed.bin http://ac-scheduler.local/update
+```
+
+What `POST /update` checks:
+
+| Check | Response |
+|---|---|
+| No usable `[ota] token` in `cfg.toml` | 403, nothing written |
+| Board is in fallback AP mode | 403, nothing written |
+| `X-OTA-Token` missing or wrong (compared in constant time) | 401, nothing written |
+| Upload shorter than `Content-Length` | 400, update aborted |
+| Image unsigned, tampered, or signed with another key | 400, boot partition unchanged |
+
+The signature check is ESP-IDF's *signed app images without hardware Secure Boot* (`CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT` and `CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT` in `sdkconfig.defaults`): `esp_ota_end()` verifies the new image's RSA-3072 Secure Boot V2 signature block against the public key in the running app's signature block. No eFuses are burned. It protects against network attackers, not against someone with USB access, who can always reflash the board. The token travels over plain HTTP, so treat it as a lock against casual uploads; the signature is what stops a malicious image.
 
 ---
 
@@ -139,6 +199,8 @@ Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/
 | GET | `/status` | Telemetry JSON payload |
 | GET | `/vacation_toggle` | Toggle manual vacation mode |
 | GET | `/schedule?s=YYYYMMDD&e=YYYYMMDD` | Set vacation date range (`s=0&e=0` to clear) |
+| GET | `/update` | OTA upload page |
+| POST | `/update` | Upload a signed firmware image (needs `X-OTA-Token`; see [Signed OTA updates](#4-signed-ota-updates)) |
 | GET | `/reset-wifi` | Returns 501 (unsupported); edit `cfg.toml` and reflash to change credentials |
 
 ### `/status` response format

@@ -149,6 +149,8 @@ fn ota_and_wifi_setup_pages_serve_html() {
     let resp = handler.handle_get("/update", &parse_query_string(""));
     assert_eq!(resp.status_code, 200);
     assert!(resp.body.contains("Firmware Update"));
+    // The upload form must send the token header POST /update requires
+    assert!(resp.body.contains("X-OTA-Token"));
 }
 
 #[test]
