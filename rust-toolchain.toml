@@ -1,3 +1,5 @@
 [toolchain]
-channel = "nightly"
+# Pinned: nightly-2026-10-20 and later fail to build std for espidf (libc stat fields),
+# and nightly-2026-10-12 panics the compiler. Bump only after an ESP target build passes.
+channel = "nightly-2026-10-01"
 components = ["rust-src", "clippy", "rustfmt"]
