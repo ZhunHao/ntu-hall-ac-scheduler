@@ -9,12 +9,14 @@ An ESP32-based smart controller for **Daikin air conditioners**, written in **Ru
 - **Written in Rust** — memory-safe, zero-cost abstractions, compiled with ESP-IDF & FreeRTOS
 - **Host Simulator** — test the web dashboard and scheduler locally on macOS/Linux (`cargo run --bin host-sim`)
 - **Asymmetric schedule** — 7 configurable ON/OFF slots per night optimised for Singapore's nocturnal temperature curve (195 min total, 22:00–07:00)
-- **Manual control** — Max Cool (16 °C) or Comfort (25 °C) at any time
+- **Manual control** — Max Cool (22 °C, the lowest setpoint the hall's Daikin controller accepts) or Comfort (25 °C) at any time
 - **Countdown timer** — presets (30 m / 1 h / 2 h / 4 h) or custom hh:mm
 - **Vacation mode** — pause the schedule manually or by calendar date range; persists across reboots in NVS flash
 - **BME280 support** — live room temperature & humidity displayed in the dashboard (I²C auto-detect on 0x76 or 0x77)
 - **Hardware Watchdog (WDT)** — automatic recovery if any task hangs
-- **Post-Boot Recovery** — immediately evaluates the active schedule slot upon power restoration without waiting for the next tick
+- **Post-Boot Recovery** — evaluates the active schedule slot as soon as the clock is valid after power restoration, without waiting for the next slot
+- **Clock gate** — the schedule only runs on a valid clock (SNTP synced, or a plausible time kept across a software reset); until then the dashboard shows "Clock not set: schedule paused". SNTP tries the public pool, then an optional home NTP server (`[time] home_ntp` in `cfg.toml`)
+- **Wi-Fi retry** — after 10 min in fallback-AP mode with nobody connected, the board reboots to retry the station (never during a running night schedule)
 - **Auto dark mode** — dashboard switches theme automatically at Singapore sunrise/sunset times
 - **Configurable Wi-Fi & Static IP** — credentials managed via `cfg.toml` with automatic SoftAP fallback (`AC-Scheduler-Setup`)
 - **mDNS discovery** — accessible at `http://ac-scheduler.local`
@@ -117,7 +119,7 @@ Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/
 | Section | Description |
 |---|---|
 | **Hero card** | Current AC status, set temperature, room temp/humidity, active timer countdown |
-| **Max Cool** | Turn AC on at 16 °C |
+| **Max Cool** | Turn AC on at 22 °C |
 | **Comfort** | Turn AC on at 25 °C |
 | **Turn Off** | Turn AC off and cancel any active timer |
 | **Timer** | Run AC for a fixed duration, then auto-off |
@@ -132,7 +134,7 @@ Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/` | Serve web dashboard |
-| GET | `/cmd?mode=on16` | Turn on at 16 °C (Max Cool) |
+| GET | `/cmd?mode=on22` | Turn on at 22 °C (Max Cool); `mode=on16` is still accepted as an alias |
 | GET | `/cmd?mode=on25` | Turn on at 25 °C (Comfort) |
 | GET | `/cmd?mode=off` | Turn off |
 | GET | `/timer?min=N` | Start timer for N minutes (max 1440); `min=0` cancels |
@@ -146,7 +148,7 @@ Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/
 ```json
 {
   "status": "Max Cool",
-  "temp": 16,
+  "temp": 22,
   "slot": 1,
   "activeMins": 60,
   "timerSecs": 3542,
@@ -157,9 +159,12 @@ Once connected, open **`http://192.168.0.93/`** or **`http://ac-scheduler.local/
   "manVac": false,
   "vacS": 0,
   "vacE": 0,
-  "ntpOk": true
+  "ntpOk": true,
+  "clock": "ok"
 }
 ```
+
+`clock` is `"ok"` or `"not_set"`; while it is `"not_set"` the schedule does not run.
 
 ---
 

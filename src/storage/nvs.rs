@@ -1,6 +1,6 @@
 //! ESP32 Non-Volatile Storage (NVS) for vacation settings persistence.
 
-use super::{VacationStorage, WifiCredentials, WifiStorage};
+use super::{TimeStorage, VacationStorage, WifiCredentials, WifiStorage};
 use crate::scheduler::VacationSettings;
 
 #[cfg(target_os = "espidf")]
@@ -192,6 +192,33 @@ impl WifiStorage for EspNvsStorage {
         }
         #[cfg(not(target_os = "espidf"))]
         {
+            Ok(())
+        }
+    }
+}
+
+impl TimeStorage for EspNvsStorage {
+    fn load_last_known_time(&self) -> Result<Option<i64>, String> {
+        #[cfg(target_os = "espidf")]
+        {
+            self.nvs.get_i64("lastTime").map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "espidf"))]
+        {
+            Ok(None)
+        }
+    }
+
+    fn save_last_known_time(&mut self, unix_secs: i64) -> Result<(), String> {
+        #[cfg(target_os = "espidf")]
+        {
+            self.nvs
+                .set_i64("lastTime", unix_secs)
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "espidf"))]
+        {
+            let _ = unix_secs;
             Ok(())
         }
     }

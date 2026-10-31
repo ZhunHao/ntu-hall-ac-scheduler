@@ -27,7 +27,7 @@ fn timer_expiry_keeps_ac_off_until_morning_override_reset() {
     state.manual_override = false;
     assert_eq!(
         engine.tick(22, 0, false, state.manual_override),
-        Some(SchedulerAction::TurnOn(16))
+        Some(SchedulerAction::TurnOn(22))
     );
 }
 
@@ -93,9 +93,9 @@ fn test_scheduler_engine_state_transitions() {
     assert_eq!(act, None);
     assert!(!engine.in_active_window);
 
-    // 22:00: Window begins, Slot 1 begins -> Turn ON at 16°C
+    // 22:00: Window begins, Slot 1 begins -> Turn ON at 22°C
     let act = engine.tick(22, 0, false, false);
-    assert_eq!(act, Some(SchedulerAction::TurnOn(16)));
+    assert_eq!(act, Some(SchedulerAction::TurnOn(22)));
     assert!(engine.in_active_window);
     assert!(engine.last_cycle_was_on);
 
@@ -128,9 +128,9 @@ fn test_vacation_mode_suppression() {
 fn test_boot_recovery() {
     let mut engine = SchedulerEngine::new();
 
-    // Boot at 22:10 (inside slot 1) -> immediately turns on at 16°C
+    // Boot at 22:10 (inside slot 1) -> immediately turns on at 22°C
     let act = engine.evaluate_boot_recovery(22, 10, false);
-    assert_eq!(act, Some(SchedulerAction::TurnOn(16)));
+    assert_eq!(act, Some(SchedulerAction::TurnOn(22)));
     assert!(engine.in_active_window);
     assert!(engine.last_cycle_was_on);
 

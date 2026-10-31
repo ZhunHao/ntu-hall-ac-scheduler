@@ -24,6 +24,7 @@ fn main() {
     {
         let mut s = state.lock().unwrap();
         s.ntp_ok = true;
+        s.clock_ok = true;
         s.bme_ok = true;
     }
 

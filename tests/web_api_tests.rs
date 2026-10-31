@@ -212,15 +212,15 @@ fn test_status_response_schema() {
 }
 
 #[test]
-fn test_cmd_on16_and_off() {
+fn test_cmd_on22_and_off() {
     let state = Arc::new(Mutex::new(AppState::new()));
     let mock = Arc::new(Mutex::new(MockTransmitter::new()));
     let transmitter: Arc<Mutex<dyn IrTransmitter>> =
         Arc::clone(&mock) as Arc<Mutex<dyn IrTransmitter>>;
     let handler = WebHandler::new(Arc::clone(&state), Arc::clone(&transmitter));
 
-    // Turn on 16
-    let query = parse_query_string("mode=on16");
+    // Turn on Max Cool
+    let query = parse_query_string("mode=on22");
     let resp = handler.handle_get("/cmd", &query);
     assert_eq!(resp.status_code, 200);
     assert_eq!(resp.body, "OK");
@@ -228,7 +228,7 @@ fn test_cmd_on16_and_off() {
     {
         let s = state.lock().unwrap();
         assert_eq!(s.system_status, "Max Cool");
-        assert_eq!(s.current_temp, 16);
+        assert_eq!(s.current_temp, 22);
         assert!(s.manual_override);
     }
     {
@@ -236,7 +236,7 @@ fn test_cmd_on16_and_off() {
         assert_eq!(tx.send_count, 1);
         let cmd = tx.last_command.unwrap();
         assert!(cmd.power);
-        assert_eq!(cmd.temp_celsius, 16);
+        assert_eq!(cmd.temp_celsius, 22);
     }
 
     // Turn off
@@ -274,7 +274,7 @@ fn test_timer_countdown_endpoint() {
         let s = state.lock().unwrap();
         assert!(s.timer.is_some());
         assert_eq!(s.system_status, "Max Cool");
-        assert_eq!(s.current_temp, 16);
+        assert_eq!(s.current_temp, 22);
         let status_resp = s.to_status_response();
         assert_eq!(status_resp.active_mins, 60);
         assert!(status_resp.timer_secs > 3590);

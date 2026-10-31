@@ -104,9 +104,9 @@ input[type=date]::-webkit-date-and-time-value{text-align:left}
     <div class="hero-timer" id="td">00:00</div>
   </div>
   <div class="tiles">
-    <div id="tile-cold" class="glass tile t-cold" onclick="send('on16')">
+    <div id="tile-cold" class="glass tile t-cold" onclick="send('on22')">
       <span class="tile-icon">&#10052;</span>
-      <span class="tile-label">Max Cool<br><small style="font-weight:400;opacity:0.7">16&deg;C</small></span>
+      <span class="tile-label">Max Cool<br><small style="font-weight:400;opacity:0.7">22&deg;C</small></span>
     </div>
     <div id="tile-warm" class="glass tile t-warm" onclick="send('on25')">
       <span class="tile-icon">&#9728;&#65039;</span>
@@ -261,19 +261,19 @@ function update(){
 
     temp.innerText=isOff?"OFF":d.temp+"\u00B0";
     temp.style.opacity=isOff?"0.3":"1";
-    st.innerText=d.ntpOk?d.status:(d.status+" ⚠️ Clock syncing");
+    st.innerText=d.clock==="not_set"?(d.status+" ⚠️ Clock not set: schedule paused"):d.status;
     if(isOff){hero.setAttribute('data-state','off');hero.classList.remove('active')}
-    else if(d.temp<20){hero.setAttribute('data-state','cold');hero.classList.add('active')}
+    else if(d.temp<25){hero.setAttribute('data-state','cold');hero.classList.add('active')}
     else{hero.setAttribute('data-state','warm');hero.classList.add('active')}
-    document.getElementById('hero-icon').textContent=(!isOff&&d.temp>=20)?"\u2600\uFE0F":"\u2744";
+    document.getElementById('hero-icon').textContent=(!isOff&&d.temp>=25)?"\u2600\uFE0F":"\u2744";
 
     if(d.bmeOk){rw.textContent=d.rTemp.toFixed(1)+"\u00B0 \u00B7 "+d.rHum.toFixed(0)+"% humidity";rw.style.display="block"}
 
     if(d.timerSecs>0){td.style.display="block";let m=Math.floor(d.timerSecs/60),s=d.timerSecs%60;td.innerText=(m<10?"0"+m:m)+":"+(s<10?"0"+s:s)}
     else{td.style.display="none"}
 
-    tileCold.classList.toggle('active',!isOff&&d.temp<20);
-    tileWarm.classList.toggle('active',!isOff&&d.temp>=20);
+    tileCold.classList.toggle('active',!isOff&&d.temp<25);
+    tileWarm.classList.toggle('active',!isOff&&d.temp>=25);
     tileOff.classList.toggle('active',isOff&&!d.status.includes("Vacation"));
 
     if(d.timerSecs>0){let m=Math.floor(d.timerSecs/60),s=d.timerSecs%60;tmrLbl.textContent=(m<10?"0"+m:m)+":"+(s<10?"0"+s:s)+" remaining";tileTmr.classList.add('active')}

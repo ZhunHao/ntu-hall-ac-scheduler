@@ -18,3 +18,8 @@ dns = "192.168.0.1"
 # Fallback SoftAP mode (if connection fails or no credentials given)
 ap_ssid = "AC-Scheduler-Setup"
 ap_password = "acsetup01"
+
+[time]
+# Second SNTP server after the public pool: chrony on the home server, which keeps
+# serving time when the internet is down. Leave out to use the public pool only.
+home_ntp = "192.168.2.44"
