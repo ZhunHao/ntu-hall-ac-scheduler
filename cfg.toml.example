@@ -18,3 +18,12 @@ dns = "192.168.0.1"
 # Fallback SoftAP mode (if connection fails or no credentials given)
 ap_ssid = "AC-Scheduler-Setup"
 ap_password = "acsetup01"
+
+[ota]
+# Shared secret required (as the X-OTA-Token header) to upload firmware via POST /update.
+# OTA stays disabled until this is set to at least 16 characters, e.g. the output of
+#   openssl rand -hex 24
+# The token is compiled into the firmware and sent over plain HTTP, so it keeps out casual
+# uploads; the firmware signature check (see README, "Signed OTA updates") is what stops a
+# tampered image.
+token = "change-me-to-a-long-random-string"

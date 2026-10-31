@@ -46,9 +46,17 @@ impl Default for WifiSettings {
     }
 }
 
+/// OTA firmware upload settings. Without a usable token, `POST /update` is refused.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct OtaSettings {
+    pub token: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub wifi: WifiSettings,
+    #[serde(default)]
+    pub ota: OtaSettings,
 }
 
 impl AppConfig {

@@ -29,6 +29,8 @@ target/
 # Local credentials & configuration
 cfg.toml
 credentials.toml
+# OTA image signing keys (README: Signed OTA updates)
+*.pem
 
 
 .env

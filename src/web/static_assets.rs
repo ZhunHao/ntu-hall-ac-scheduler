@@ -48,7 +48,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#0d1117;
 .card{background:#161b22;padding:28px;border-radius:14px;border:1px solid #30363d;width:100%;max-width:400px;box-shadow:0 8px 24px rgba(0,0,0,0.5)}
 h2{margin:0 0 8px;color:#58a6ff;font-size:22px}
 p{font-size:14px;color:#8b949e;margin:0 0 20px}
-input[type=file]{width:100%;box-sizing:border-box;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#8b949e;font-size:14px}
+input[type=file],input[type=password]{width:100%;box-sizing:border-box;padding:10px;background:#0d1117;border:1px solid #30363d;border-radius:8px;color:#8b949e;font-size:14px}
 button{width:100%;margin-top:20px;padding:13px;background:#1f6feb;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer}
 button:hover{background:#388bfd}
 button:disabled{background:#30363d;color:#8b949e;cursor:not-allowed}
@@ -62,6 +62,7 @@ button:disabled{background:#30363d;color:#8b949e;cursor:not-allowed}
 <h2>Firmware Update</h2>
 <p>Upload a new compiled <code>ac-scheduler.bin</code> file:</p>
 <input type="file" id="fw" accept=".bin">
+<input type="password" id="token" placeholder="OTA token" autocomplete="off" style="margin-top:12px">
 <button id="btn" onclick="startOta()">Upload Firmware</button>
 <div id="prog"><div id="bar"></div></div>
 <div id="msg"></div>
@@ -70,10 +71,13 @@ button:disabled{background:#30363d;color:#8b949e;cursor:not-allowed}
 function startOta(){
   const f=document.getElementById('fw').files[0];
   if(!f){alert('Please select a .bin firmware file');return}
+  const token=document.getElementById('token').value;
+  if(!token){alert('Enter the OTA token from cfg.toml');return}
   const btn=document.getElementById('btn'),prog=document.getElementById('prog'),bar=document.getElementById('bar'),msg=document.getElementById('msg');
   btn.disabled=true;prog.style.display='block';msg.innerText='Uploading firmware...';msg.style.color='#8b949e';
   const xhr=new XMLHttpRequest();
   xhr.open('POST','/update',true);
+  xhr.setRequestHeader('X-OTA-Token',token);
   xhr.upload.onprogress=e=>{if(e.lengthComputable){const p=Math.round((e.loaded/e.total)*100);bar.style.width=p+'%';msg.innerText='Uploading: '+p+'%'}};
   xhr.onload=()=>{
     if(xhr.status===200){

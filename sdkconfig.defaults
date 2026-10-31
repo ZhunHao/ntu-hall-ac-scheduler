@@ -11,3 +11,13 @@ CONFIG_RMT_SKIP_LEGACY_CONFLICT_CHECK=y
 CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
 CONFIG_PCNT_SKIP_LEGACY_CONFLICT_CHECK=y
 CONFIG_GPTIMER_SKIP_LEGACY_CONFLICT_CHECK=y
+
+# Signed OTA updates (ESP-IDF "Require signed app images" without hardware secure boot).
+# esp_ota_end() verifies the new image's Secure Boot V2 RSA-3072 signature against the public
+# key in the running app's signature block, so update.complete() rejects unsigned or tampered
+# images. No eFuses are burned. The running app must itself be signed or it aborts at boot.
+# cargo/espflash don't run IDF's signing step, so images are signed with espsecure (README).
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n
