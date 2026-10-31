@@ -348,12 +348,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut buf = [0u8; 1024];
             let mut total_bytes = 0;
             loop {
-                if let Some(cl) = content_len {
-                    if total_bytes >= cl {
-                        break;
-                    }
-                }
-                let n = req.read(&mut buf)?;
+                // Never read past the declared length, so trailing bytes cannot reach the partition
+                let want = match content_len {
+                    Some(cl) if total_bytes >= cl => break,
+                    Some(cl) => (cl - total_bytes).min(buf.len()),
+                    None => buf.len(),
+                };
+                let n = req.read(&mut buf[..want])?;
                 if n == 0 {
                     break;
                 }
@@ -370,6 +371,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = update.abort();
                 let mut resp = req.into_status_response(400)?;
                 resp.write(b"Empty firmware payload")?;
+                return Ok(());
+            }
+
+            // A connection that closes early must not leave a truncated image marked bootable
+            if content_len.is_some_and(|cl| total_bytes != cl) {
+                let _ = update.abort();
+                let mut resp = req.into_status_response(400)?;
+                resp.write(b"Firmware upload ended before Content-Length bytes arrived")?;
                 return Ok(());
             }
 
